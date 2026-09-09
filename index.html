@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Check IN/OUT Florist - Pengingat & Pelacak Papan Bunga</title>
+  <meta name="description" content="Aplikasi pemantau dan pengingat penjemputan papan bunga sewa lewat batas acara realtime untuk laptop dan HP." />
+  <meta name="theme-color" content="#0c141c" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+  <!-- Web Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="manifest.json" />
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="css/style.css" />
+
+  <!-- External Libraries (CDN) -->
+  <!-- Dexie.js for IndexedDB Offline-First -->
+  <script src="https://unpkg.com/dexie@3.2.4/dist/dexie.min.js"></script>
+
+  <!-- Firebase App & Realtime Database SDK (Compat) -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header class="header-bar">
+    <div class="brand-wrapper">
+      <div class="brand-logo">🌸</div>
+      <div class="brand-info">
+        <h1>Check IN/OUT <span style="font-size:0.8rem; background:rgba(16,185,129,0.2); padding:2px 6px; border-radius:4px; color:#34d399;">PRO</span></h1>
+        <p>Pelacak & Pengingat Penjemputan Papan</p>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <!-- Sync Status Badge -->
+      <div class="sync-badge" id="sync-badge" title="Status Sinkronisasi Realtime Cloud" onclick="openSettingsModal()">
+        <span class="dot"></span>
+        <span id="sync-text">Menghubungkan...</span>
+      </div>
+
+      <!-- Button Izin Notifikasi Web -->
+      <button class="btn btn-secondary btn-icon-only" id="btn-request-notif" title="Aktifkan Notifikasi Sistem HP & Laptop">
+        🔔
+      </button>
+
+      <!-- Button Pengaturan -->
+      <button class="btn btn-secondary btn-icon-only" id="btn-settings" title="Pengaturan & PIN Cloud">
+        ⚙️
+      </button>
+
+      <!-- Button Tambah Desktop -->
+      <button class="btn btn-primary btn-desktop" id="btn-open-add">
+        <span>➕</span> Catat Papan Antar
+      </button>
+    </div>
+  </header>
+
+  <!-- Urgent Overdue Banner (Muncul Otomatis Jika Ada Papan Telat) -->
+  <div class="urgent-banner" id="urgent-banner" style="display: none;">
+    <div class="urgent-banner-left">
+      <div class="urgent-banner-icon">🚨</div>
+      <div>
+        <div class="urgent-banner-title">PERINGATAN: Papan Bunga Perlu Dijemput Segera!</div>
+        <div class="urgent-banner-desc" id="urgent-banner-text">Ada papan yang telah melewati target batas sewa acara.</div>
+      </div>
+    </div>
+    <div style="display: flex; gap: 8px;">
+      <button class="btn-urgent-action" id="btn-wa-overdue" title="Kirim daftar papan telat ke WhatsApp Driver / Diri Sendiri">
+        📲 Rekap ke WA
+      </button>
+    </div>
+  </div>
+
+  <!-- Main Container -->
+  <main class="container">
+
+    <!-- Quick Statistics Bar -->
+    <section class="stats-grid">
+      <!-- Stat 1: Overdue -->
+      <div class="stat-card" onclick="document.querySelector('.tab-btn[data-tab=\'overdue\']').click()">
+        <div class="stat-icon-wrapper stat-icon-red">🚨</div>
+        <div class="stat-content">
+          <div class="stat-value" id="stat-count-overdue">0</div>
+          <div class="stat-label">Lewat Batas Jemput</div>
+        </div>
+      </div>
+
+      <!-- Stat 2: Today -->
+      <div class="stat-card" onclick="document.querySelector('.tab-btn[data-tab=\'today\']').click()">
+        <div class="stat-icon-wrapper stat-icon-amber">⏰</div>
+        <div class="stat-content">
+          <div class="stat-value" id="stat-count-today">0</div>
+          <div class="stat-label">Target Hari Ini</div>
+        </div>
+      </div>
+
+      <!-- Stat 3: Active In Field -->
+      <div class="stat-card" onclick="document.querySelector('.tab-btn[data-tab=\'active\']').click()">
+        <div class="stat-icon-wrapper stat-icon-blue">🌿</div>
+        <div class="stat-content">
+          <div class="stat-value" id="stat-count-active">0</div>
+          <div class="stat-label">Sedang Terpasang</div>
+        </div>
+      </div>
+
+      <!-- Stat 4: Completed -->
+      <div class="stat-card" onclick="document.querySelector('.tab-btn[data-tab=\'completed\']').click()">
+        <div class="stat-icon-wrapper stat-icon-green">✅</div>
+        <div class="stat-content">
+          <div class="stat-value" id="stat-count-completed">0</div>
+          <div class="stat-label">Sudah Check IN</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Toolbar: Search, Filter, & Extra Actions -->
+    <div class="action-toolbar">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" class="search-input" id="search-input" placeholder="Cari No. Nota, Pemesan, Lokasi, Ucapan..." />
+      </div>
+
+      <!-- Filter Jenis Papan -->
+      <div class="filter-pills">
+        <button class="pill-btn active" data-filter="all">Semua Jenis</button>
+        <button class="pill-btn" data-filter="single">Single / Standar</button>
+        <button class="pill-btn" data-filter="double">Double / Gandeng</button>
+        <button class="pill-btn" data-filter="rustic">Rustic / Kayu</button>
+      </div>
+
+      <div class="toolbar-btns">
+        <button class="btn btn-secondary" id="btn-import-finance" title="Impor otomatis pesanan dari aplikasi Akio Finance">
+          📥 Impor dari Finance
+        </button>
+      </div>
+    </div>
+
+    <!-- Status Tabs -->
+    <nav class="tabs-wrapper">
+      <button class="tab-btn active" data-tab="overdue">
+        <span>🚨 Lewat Batas Jemput</span>
+        <span class="tab-badge badge-red" id="badge-tab-overdue">0</span>
+      </button>
+      <button class="tab-btn" data-tab="today">
+        <span>⏰ Target Hari Ini</span>
+        <span class="tab-badge" id="badge-tab-today">0</span>
+      </button>
+      <button class="tab-btn" data-tab="active">
+        <span>🌿 Masih Terpasang</span>
+        <span class="tab-badge" id="badge-tab-active">0</span>
+      </button>
+      <button class="tab-btn" data-tab="completed">
+        <span>✅ Selesai Check IN</span>
+        <span class="tab-badge" id="badge-tab-completed">0</span>
+      </button>
+      <button class="tab-btn" data-tab="all">
+        <span>📋 Semua Papan</span>
+        <span class="tab-badge" id="badge-tab-all">0</span>
+      </button>
+    </nav>
+
+    <!-- Board Cards Grid Container -->
+    <section class="boards-grid" id="boards-container">
+      <!-- Dimuat dinamis oleh app.js -->
+    </section>
+
+  </main>
+
+  <!-- Floating Action Button for Mobile Add -->
+  <button class="fab-add" id="fab-add" title="Catat Papan Keluar (Check OUT)">
+    ➕
+  </button>
+
+  <!-- Mobile Bottom Navigation Bar -->
+  <nav class="bottom-nav">
+    <button class="nav-item active" data-tab="overdue">
+      <span class="nav-icon">🚨</span>
+      <span>Darurat</span>
+      <span class="nav-dot-badge" id="nav-dot-overdue" style="display:none;"></span>
+    </button>
+    <button class="nav-item" data-tab="today">
+      <span class="nav-icon">⏰</span>
+      <span>Hari Ini</span>
+    </button>
+    <button class="nav-item" data-tab="active">
+      <span class="nav-icon">🌿</span>
+      <span>Di Luar</span>
+    </button>
+    <button class="nav-item" data-tab="completed">
+      <span class="nav-icon">✅</span>
+      <span>Selesai</span>
+    </button>
+    <button class="nav-item" data-tab="all">
+      <span class="nav-icon">📋</span>
+      <span>Semua</span>
+    </button>
+  </nav>
+
+  <!-- MODAL: Tambah / Edit Papan Bunga (Check OUT) -->
+  <div class="modal-backdrop" id="modal-board">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-board-title">📤 Catat Papan Keluar (Check OUT)</div>
+        <button class="btn-close" onclick="closeBoardModal()">✕</button>
+      </div>
+
+      <form id="form-board">
+        <input type="hidden" id="form-board-id" />
+        <input type="hidden" id="form-gps-lat" />
+        <input type="hidden" id="form-gps-lng" />
+        <input type="hidden" id="form-photo-base64" />
+
+        <div class="modal-body">
+
+          <!-- Row: No. Nota & Pemesan -->
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">No. Nota / ID Papan <span class="req">*</span></label>
+              <input type="text" class="form-input" id="form-no-nota" placeholder="Contoh: NOTA-101 / R-04" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Nama Pemesan <span class="req">*</span></label>
+              <input type="text" class="form-input" id="form-nama-pemesan" placeholder="Nama pemesan" required />
+            </div>
+          </div>
+
+          <!-- Row: No. WA & Jenis Papan -->
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">No. WhatsApp Pemesan/Driver</label>
+              <input type="tel" class="form-input" id="form-no-wa" placeholder="08xxxxxxxxxx" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Jenis / Model Papan <span class="req">*</span></label>
+              <input type="text" class="form-input" id="form-jenis-papan" list="list-jenis-papan" placeholder="Pilih dari daftar atau ketik bebas..." required />
+              <datalist id="list-jenis-papan">
+                <option value="Papan Standar (Single)"></option>
+                <option value="Papan Gandeng (Double)"></option>
+                <option value="Papan Mahkota / Jumbo"></option>
+                <option value="Papan Rustic / Kayu"></option>
+                <option value="Papan Kertas / Printing"></option>
+              </datalist>
+            </div>
+          </div>
+
+          <!-- Preset Pilihan Cepat Jenis Acara & Durasi Sewa -->
+          <div class="form-group">
+            <label class="form-label">Pilihan Cepat Durasi Sewa Acara:</label>
+            <div class="preset-grid">
+              <button type="button" class="preset-btn active" data-preset="pesta" data-duration="1">
+                <span class="preset-icon">💍</span>
+                <span class="preset-name">Pesta / Nikah</span>
+                <span class="preset-duration">1 Hari</span>
+              </button>
+              <button type="button" class="preset-btn" data-preset="opening" data-duration="2">
+                <span class="preset-icon">🏢</span>
+                <span class="preset-name">Grand Opening</span>
+                <span class="preset-duration">2 - 3 Hari</span>
+              </button>
+              <button type="button" class="preset-btn" data-preset="duka" data-duration="3">
+                <span class="preset-icon">🕊️</span>
+                <span class="preset-name">Duka Cita</span>
+                <span class="preset-duration">3 Hari</span>
+              </button>
+            </div>
+            <input type="hidden" id="form-jenis-acara" value="Pesta / Pernikahan / Wisuda" />
+          </div>
+
+          <!-- Tanggal & Jam Pengantaran (OUT) -->
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Tanggal Antar (OUT) <span class="req">*</span></label>
+              <input type="date" class="form-input" id="form-tgl-antar" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Jam Antar (Format 24 Jam)</label>
+              <div class="time-24h-group">
+                <select class="time-24h-select" id="form-jam-antar-hh"></select>
+                <span class="time-sep">:</span>
+                <select class="time-24h-select" id="form-jam-antar-mm"></select>
+                <span class="time-tag">WIB (24 Jam)</span>
+              </div>
+              <div class="time-quick-chips">
+                <button type="button" class="chip-time" onclick="setTime24('form-jam-antar', '08', '00')">08:00</button>
+                <button type="button" class="chip-time" onclick="setTime24('form-jam-antar', '09', '00')">09:00</button>
+                <button type="button" class="chip-time" onclick="setTime24('form-jam-antar', '13', '00')">13:00</button>
+                <button type="button" class="chip-time" onclick="setTime24('form-jam-antar', '15', '00')">15:00</button>
+              </div>
+              <input type="hidden" id="form-jam-antar" value="09:00" />
+            </div>
+          </div>
+
+          <!-- Target Batas Penjemputan (Batas Waktu Sewa Selesai) -->
+          <div class="form-row" style="background:rgba(244,63,94,0.06); padding:10px; border-radius:var(--radius-md); border:1px dashed rgba(244,63,94,0.3);">
+            <div class="form-group">
+              <label class="form-label" style="color:#fda4af;">⏳ Target Tanggal Jemput <span class="req">*</span></label>
+              <input type="date" class="form-input" id="form-target-tgl" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label" style="color:#fda4af;">Jam Batas Jemput (24 Jam)</label>
+              <div class="time-24h-group">
+                <select class="time-24h-select" id="form-target-jam-hh"></select>
+                <span class="time-sep">:</span>
+                <select class="time-24h-select" id="form-target-jam-mm"></select>
+                <span class="time-tag">WIB (24 Jam)</span>
+              </div>
+              <div class="time-quick-chips">
+                <button type="button" class="chip-time" onclick="setTime24('form-target-jam', '17', '00')">17:00</button>
+                <button type="button" class="chip-time" onclick="setTime24('form-target-jam', '18', '00')">18:00</button>
+                <button type="button" class="chip-time" onclick="setTime24('form-target-jam', '21', '00')">21:00</button>
+                <button type="button" class="chip-time" onclick="setTime24('form-target-jam', '22', '00')">22:00</button>
+              </div>
+              <input type="hidden" id="form-target-jam" value="18:00" />
+            </div>
+          </div>
+
+
+          <!-- Lokasi Acara & GPS -->
+          <div class="form-group">
+            <div class="form-label">
+              <span>Alamat / Lokasi Acara <span class="req">*</span></span>
+              <button type="button" class="btn btn-secondary" id="btn-capture-gps" style="padding:4px 10px; font-size:0.75rem;">
+                📍 Rekam Titik GPS Pemasangan
+              </button>
+            </div>
+            <textarea class="form-textarea" id="form-lokasi" rows="2" placeholder="Gedung / Hotel / Alamat Lengkap / Patokan jalan..." required></textarea>
+          </div>
+
+          <!-- Isi Ucapan & Catatan -->
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Isi Ucapan Papan</label>
+              <input type="text" class="form-input" id="form-ucapan" placeholder="Happy Wedding / Selamat & Sukses..." />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Catatan Tambahan</label>
+              <input type="text" class="form-input" id="form-catatan" placeholder="Contoh: Rangka besi #04, minta dibongkar malam" />
+            </div>
+          </div>
+
+          <!-- Foto Dokumentasi Pemasangan (Otomatis Dikompres Ringan ~35KB) -->
+          <div class="form-group">
+            <label class="form-label">Foto Pemasangan di Lokasi (Otomatis Dikompres Hemat Kuota)</label>
+            <div class="photo-uploader" onclick="document.getElementById('form-photo-input').click()">
+              <div id="photo-upload-prompt" style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                <span style="font-size: 28px;">📷</span>
+                <span style="font-size: 0.85rem; font-weight: 700;">Sentuh untuk Ambil Foto / Pilih Gambar</span>
+                <span style="font-size: 0.7rem; color: var(--text-dim);">Dikompres otomatis ~35 KB (Super hemat kuota Firebase)</span>
+              </div>
+              <div id="photo-preview-wrap" class="photo-preview-wrap" style="display: none;">
+                <img id="photo-preview-img" class="photo-preview-img" alt="Pratinjau Foto" />
+                <button type="button" class="btn-remove-photo" onclick="removeSelectedPhoto(event)" title="Hapus foto">✕</button>
+              </div>
+            </div>
+            <input type="file" id="form-photo-input" accept="image/*" capture="environment" style="display: none;" />
+          </div>
+
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeBoardModal()">Batal</button>
+          <button type="submit" class="btn btn-primary">💾 Simpan Data Papan</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Check IN (Konfirmasi Papan Selesai Dijemput) -->
+  <div class="modal-backdrop" id="modal-checkin">
+    <div class="modal-card" style="max-width: 440px;">
+      <div class="modal-header">
+        <div class="modal-title">📥 Konfirmasi Check IN Papan</div>
+        <button class="btn-close" onclick="closeCheckInModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 0.85rem; color: var(--text-muted);">
+          Tandai bahwa papan bunga ini sudah dinaikkan ke kendaraan dan dalam perjalanan kembali ke gudang/toko.
+        </p>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Tanggal Dijemput</label>
+            <input type="date" class="form-input" id="checkin-tgl" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Jam Dijemput (24 Jam)</label>
+            <div class="time-24h-group">
+              <select class="time-24h-select" id="checkin-jam-hh"></select>
+              <span class="time-sep">:</span>
+              <select class="time-24h-select" id="checkin-jam-mm"></select>
+              <span class="time-tag">WIB (24 Jam)</span>
+            </div>
+            <input type="hidden" id="checkin-jam" value="18:00" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Petugas Penjemput</label>
+          <input type="text" class="form-input" id="checkin-petugas" value="Saya Sendiri (Owner)" placeholder="Nama supir/petugas" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeCheckInModal()">Batal</button>
+        <button type="button" class="btn btn-checkin" onclick="handleConfirmCheckIn()">✅ Selesai Check IN</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Pengaturan & PIN Cloud Sync -->
+  <div class="modal-backdrop" id="modal-settings">
+    <div class="modal-card" style="max-width: 460px;">
+      <div class="modal-header">
+        <div class="modal-title">⚙️ Pengaturan & Sinkronisasi</div>
+        <button class="btn-close" onclick="closeSettingsModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">PIN Toko Cloud Realtime (Laptop ⇄ HP)</label>
+          <input type="text" class="form-input" id="setting-pin" value="AKIOFLORIST" style="text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;" />
+          <small style="color: var(--text-dim); font-size: 0.72rem; margin-top: 4px;">
+            Pastikan PIN yang dimasukkan di HP dan Laptop sama agar data tersinkronisasi instan (< 1 detik).
+          </small>
+        </div>
+
+        <div style="background: rgba(16,185,129,0.08); padding: 12px; border-radius: var(--radius-md); border: 1px solid rgba(16,185,129,0.2);">
+          <div style="font-weight: 700; font-size: 0.82rem; color: #34d399; margin-bottom: 4px;">🛡️ Keamanan Database Terisolasi</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); line-height: 1.4;">
+            Aplikasi Check IN/OUT Florist berjalan pada jalur cloud tersendiri (<code>stores/{PIN}/check_in_out/</code>) dan database lokal mandiri <code>CheckInOutFloristDB</code>. Data keuangan kas & pesanan Anda sebelumnya dijamin tidak akan terganggu.
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-top: 6px;">
+          <button type="button" class="btn btn-secondary" onclick="NotificationManager.playChime(true)" style="width: 100%;">
+            🔊 Uji Coba Suara Alarm Overdue
+          </button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeSettingsModal()">Tutup</button>
+        <button type="button" class="btn btn-primary" onclick="handleSaveSettings()">Simpan Pengaturan</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Full Image Viewer -->
+  <div class="modal-backdrop" id="modal-image-view" onclick="closeImageViewModal()">
+    <div style="max-width: 90vw; max-height: 90vh; position: relative;">
+      <img id="image-full-display" src="" alt="Foto Papan" style="max-width: 100%; max-height: 90vh; border-radius: var(--radius-md); box-shadow: var(--shadow-lg);" />
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Application Scripts -->
+  <script src="js/db.js"></script>
+  <script src="js/notifications.js"></script>
+  <script src="js/firebase-sync.js"></script>
+  <script src="js/app.js"></script>
+
+  <!-- PWA Service Worker Registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').then((reg) => {
+          console.log('[PWA] Service Worker terdaftar:', reg.scope);
+        }).catch((err) => {
+          console.warn('[PWA] Registrasi SW gagal:', err);
+        });
+      });
+    }
+  </script>
+</body>
+</html>
