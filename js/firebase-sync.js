@@ -251,17 +251,48 @@ async function importFromAkioFinancePesanan() {
     targetDate.setDate(targetDate.getDate() + durationDays);
     const targetDateStr = targetDate.toISOString().split('T')[0];
 
-    // ID unik berdasarkan no_nota Finance agar tidak duplikat
-    const boardId = 'FIN-' + (ord.no_nota ? ord.no_nota.replace(/[^a-zA-Z0-9]/g, '') : String(ord.id));
+    // ID unik berdasarkan no_nota / ID Finance agar konsisten
+    const noNotaClean = ord.no_nota ? ord.no_nota.replace(/[^a-zA-Z0-9]/g, '') : String(ord.id);
+    const boardId = 'FIN-' + noNotaClean;
+    const boardIdLama = 'B-' + noNotaClean;
+    const ordIdStr = String(ord.id || '').trim();
+    const cleanNota = (ord.no_nota || '').trim().toLowerCase();
 
-    // Cek apakah sudah ada di database IN/OUT
-    const existing = await db.boards.get(boardId);
+    // ─── Cek SEMUA data yang cocok di database (ID baru, ID lama, no_nota) ───
+    const allMatches = await db.boards.filter(b => {
+      if (b.id === boardId || b.id === boardIdLama) return true;
+      if (b.id === 'B-' + ordIdStr || b.id === 'FIN-' + ordIdStr) return true;
+      if (cleanNota && (b.no_nota || '').trim().toLowerCase() === cleanNota) return true;
+      if (ordIdStr && (b.no_nota || '').trim() === ordIdStr) return true;
+      return false;
+    }).toArray();
 
-    // Jika sudah ada dan sudah di-Check IN (SELESAI), skip — jangan timpa
-    if (existing && existing.status_jemput === 'SELESAI') continue;
+    // Jika SALAH SATU papan yang cocok sudah di-Check IN (SELESAI) → SKIP!
+    // Papan ini sudah diambil oleh tim florist.
+    const isCompleted = allMatches.some(b => b.status_jemput === 'SELESAI');
+    if (isCompleted) {
+      // Bersihkan data duplikat 'BELUM' jika sempat terbuat akibat bug impor sebelumnya
+      for (const b of allMatches) {
+        if (b.status_jemput !== 'SELESAI') {
+          await deleteBoardFromCloud(b.id);
+        }
+      }
+      continue;
+    }
+
+    // Jika belum SELESAI, ambil data existing pertama dan hapus duplikat ekstra jika ada
+    let existing = allMatches.length > 0 ? allMatches[0] : null;
+    if (allMatches.length > 1) {
+      for (let i = 1; i < allMatches.length; i++) {
+        await deleteBoardFromCloud(allMatches[i].id);
+      }
+    }
+
+    // Gunakan ID yang sudah ada jika ketemu (supaya tidak buat entri baru)
+    const finalBoardId = existing ? existing.id : boardId;
 
     const boardObj = {
-      id: boardId,
+      id: finalBoardId,
       no_nota: ord.no_nota || String(ord.id),
       nama_pemesan: ord.nama_pemesan || 'Tanpa Nama',
       no_wa_pemesan: ord.no_wa || '',                    // field 'no_wa' di Finance
@@ -274,8 +305,10 @@ async function importFromAkioFinancePesanan() {
       gps_lng: ord.gps_lng ? parseFloat(ord.gps_lng) : null,
       tgl_antar: tglAntar,
       jam_antar: ord.jam_antar || '09:00',
+      // Pertahankan target jemput yang sudah diatur manual oleh user, jika sudah ada
       target_tgl_jemput: existing ? (existing.target_tgl_jemput || targetDateStr) : targetDateStr,
       target_jam_jemput: existing ? (existing.target_jam_jemput || '18:00') : '18:00',
+      // Pertahankan status & data check-in yang sudah ada
       status_jemput: existing ? existing.status_jemput : 'BELUM',
       foto_antar: existing ? existing.foto_antar : null,
       foto_jemput: null,
@@ -293,6 +326,7 @@ async function importFromAkioFinancePesanan() {
     } else {
       importedCount++;
     }
+
   }
 
   let msg = '';
