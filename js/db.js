@@ -3,10 +3,115 @@
 
 const db = new Dexie('CheckInOutFloristDB');
 
+// Versi 1 - Schema awal (dipertahankan untuk migrasi aman)
 db.version(1).stores({
   boards: 'id, no_nota, nama_pemesan, jenis_papan, jenis_acara, tgl_antar, target_tgl_jemput, status_jemput, created_at, updated_at',
   settings: 'key'
 });
+
+// Tipe papan default (dipakai saat pertama kali install atau reset)
+// PENTING: harus dideklarasikan SEBELUM db.version(2).upgrade() memakainya
+const DEFAULT_BOARD_TYPES = [
+  'Papan Standar (Single)',
+  'Papan Gandeng (Double)',
+  'Papan Mahkota / Jumbo',
+  'Papan Rustic / Kayu',
+  'Papan Kertas / Printing',
+];
+
+// Versi 2 - Tambah tabel tipe papan yang bisa dikelola user
+db.version(2).stores({
+  boards: 'id, no_nota, nama_pemesan, jenis_papan, jenis_acara, tgl_antar, target_tgl_jemput, status_jemput, created_at, updated_at',
+  settings: 'key',
+  board_types: '++id, nama, urutan, created_at'
+}).upgrade(async tx => {
+  // Seed data tipe papan default saat pertama kali upgrade
+  const existingCount = await tx.table('board_types').count();
+  if (existingCount === 0) {
+    await tx.table('board_types').bulkAdd(DEFAULT_BOARD_TYPES.map((nama, i) => ({
+      nama,
+      urutan: i + 1,
+      created_at: new Date().toISOString()
+    })));
+  }
+});
+
+// ─── Fungsi CRUD Tipe Papan ─────────────────────────────────────────────────
+
+// Ambil semua tipe papan dari database, diurutkan
+async function getBoardTypes() {
+  try {
+    const types = await db.board_types.orderBy('urutan').toArray();
+    return types;
+  } catch (e) {
+    console.error('[getBoardTypes]', e);
+    return [];
+  }
+}
+
+// Tambah tipe papan baru
+async function addBoardType(nama) {
+  nama = (nama || '').trim();
+  if (!nama) return null;
+
+  // Cegah duplikat (case-insensitive)
+  const existing = await db.board_types.filter(t => t.nama.toLowerCase() === nama.toLowerCase()).first();
+  if (existing) return null;
+
+  const maxUrutan = await db.board_types.orderBy('urutan').last();
+  const newUrutan = maxUrutan ? (maxUrutan.urutan + 1) : 1;
+
+  const id = await db.board_types.add({
+    nama,
+    urutan: newUrutan,
+    created_at: new Date().toISOString()
+  });
+  return id;
+}
+
+// Hapus tipe papan berdasarkan id
+async function deleteBoardType(id) {
+  try {
+    await db.board_types.delete(id);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Edit nama tipe papan
+async function renameBoardType(id, newNama) {
+  newNama = (newNama || '').trim();
+  if (!newNama) return false;
+  try {
+    await db.board_types.update(id, { nama: newNama });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Reset ke tipe default
+async function resetBoardTypesToDefault() {
+  await db.board_types.clear();
+  await db.board_types.bulkAdd(DEFAULT_BOARD_TYPES.map((nama, i) => ({
+    nama,
+    urutan: i + 1,
+    created_at: new Date().toISOString()
+  })));
+}
+
+// Inisialisasi tipe papan pertama kali jika tabel kosong
+async function ensureBoardTypesSeeded() {
+  const count = await db.board_types.count();
+  if (count === 0) {
+    await db.board_types.bulkAdd(DEFAULT_BOARD_TYPES.map((nama, i) => ({
+      nama,
+      urutan: i + 1,
+      created_at: new Date().toISOString()
+    })));
+  }
+}
 
 // Helper: Ambil tanggal lokal hari ini (YYYY-MM-DD)
 function getTodayDateStr() {

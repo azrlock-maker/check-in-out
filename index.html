@@ -73,7 +73,10 @@
         <div class="urgent-banner-desc" id="urgent-banner-text">Ada papan yang telah melewati target batas sewa acara.</div>
       </div>
     </div>
-    <div style="display: flex; gap: 8px;">
+    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+      <button class="btn-urgent-action" id="btn-checkin-all-overdue" onclick="handleBulkCheckIn('overdue')" style="background:#10b981;" title="Check IN semua papan yang telat sekaligus dengan jam realtime sekarang">
+        📥 Check IN Semua Telat
+      </button>
       <button class="btn-urgent-action" id="btn-wa-overdue" title="Kirim daftar papan telat ke WhatsApp Driver / Diri Sendiri">
         📲 Rekap ke WA
       </button>
@@ -138,6 +141,9 @@
       </div>
 
       <div class="toolbar-btns">
+        <button class="btn btn-secondary" id="btn-toggle-select" onclick="toggleMultiSelectMode()" title="Pilih beberapa papan sekaligus untuk di-Check IN serentak">
+          ☑️ Pilih Sekaligus
+        </button>
         <button class="btn btn-secondary" id="btn-import-finance" title="Impor otomatis pesanan dari aplikasi Akio Finance">
           📥 Impor dari Finance
         </button>
@@ -386,6 +392,17 @@
           Tandai bahwa papan bunga ini sudah dinaikkan ke kendaraan dan dalam perjalanan kembali ke gudang/toko.
         </p>
 
+        <!-- Live Clock Banner Realtime -->
+        <div style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.3); border-radius:var(--radius-md); padding:10px 14px; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-size:0.75rem; color:var(--text-muted); font-weight:600;">⏰ Waktu Jam Berjalan (Realtime):</div>
+            <div style="font-size:1.05rem; font-weight:800; color:#34d399; font-family:monospace;" id="modal-live-clock-text">--:--:-- WIB</div>
+          </div>
+          <button type="button" class="btn btn-secondary" onclick="syncModalTimeToNow()" style="padding:6px 10px; font-size:0.75rem;" title="Set ke jam realtime saat ini">
+            🔄 Pakai Jam Sekarang
+          </button>
+        </div>
+
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Tanggal Dijemput</label>
@@ -443,6 +460,11 @@
             🔊 Uji Coba Suara Alarm Overdue
           </button>
         </div>
+        <div class="form-group" style="margin-top: 6px;">
+          <button type="button" class="btn btn-primary" id="btn-manage-types" style="width: 100%; background: linear-gradient(135deg, #7c3aed, #4f46e5);">
+            🏷️ Kelola Tipe / Model Papan
+          </button>
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" onclick="closeSettingsModal()">Tutup</button>
@@ -458,8 +480,70 @@
     </div>
   </div>
 
+  <!-- MODAL: Kelola Tipe / Model Papan dari Database -->
+  <div class="modal-backdrop" id="modal-manage-types">
+    <div class="modal-card" style="max-width: 480px;">
+      <div class="modal-header">
+        <div class="modal-title">🏷️ Kelola Tipe / Model Papan</div>
+        <button class="btn-close" onclick="closeManageBoardTypesModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 12px; line-height: 1.5;">
+          Daftar tipe papan di bawah akan muncul sebagai pilihan saran saat mencatat papan baru.
+          Anda bisa menambah, mengedit, atau menghapus sesuai kebutuhan toko Anda.
+        </p>
+
+        <!-- Daftar Tipe Papan dari DB -->
+        <div id="manage-types-list" style="max-height: 260px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 4px 0; margin-bottom: 14px;">
+          <!-- Dirender oleh JS -->
+        </div>
+
+        <!-- Form Tambah Tipe Baru -->
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <input
+            type="text"
+            class="form-input"
+            id="input-new-board-type"
+            placeholder="Nama tipe baru, misal: Papan Akrilik LED"
+            style="flex: 1;"
+            onkeydown="if(event.key==='Enter'){event.preventDefault(); handleAddBoardType();}"
+          />
+          <button type="button" class="btn btn-primary" onclick="handleAddBoardType()" style="white-space: nowrap; padding: 9px 14px;">
+            ➕ Tambah
+          </button>
+        </div>
+
+        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end;">
+          <button type="button" class="btn btn-secondary" onclick="handleResetBoardTypes()" style="font-size: 0.78rem; padding: 6px 12px;">
+            🔄 Reset ke Default
+          </button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" onclick="closeManageBoardTypesModal()">✅ Selesai</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Notification Container -->
   <div class="toast-container" id="toast-container"></div>
+
+  <!-- Floating Bulk Check IN Bar -->
+  <div class="bulk-bar" id="bulk-action-bar" style="display: none;">
+    <div class="bulk-bar-info">
+      <span class="bulk-count-badge" id="bulk-count-text">0 Papan</span>
+      <span style="font-size:0.8rem; color:var(--text-muted);">terpilih</span>
+    </div>
+    <div class="bulk-bar-actions">
+      <button type="button" class="btn btn-secondary" onclick="toggleSelectAllVisible()" style="padding:6px 12px; font-size:0.78rem;" id="btn-select-all-text">
+        Pilih Semua
+      </button>
+      <button type="button" class="btn btn-primary" onclick="handleExecuteBulkCheckIn()" style="padding:7px 14px; font-size:0.82rem;">
+        📥 Check IN (<span id="bulk-live-time">--:--</span> WIB)
+      </button>
+      <button type="button" class="btn-close" onclick="cancelMultiSelect()" style="width:28px; height:28px; font-size:14px;" title="Batal pilihan">✕</button>
+    </div>
+  </div>
 
   <!-- Application Scripts -->
   <script src="js/db.js"></script>

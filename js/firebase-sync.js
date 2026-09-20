@@ -117,6 +117,24 @@ function attachCloudListeners() {
       setTimeout(() => { isPullingFromCloud = false; }, 300);
     }
   });
+
+  // Listener realtime untuk tipe papan (board_types)
+  const typesRef = firebaseDb.ref(`stores/${currentStorePin}/check_in_out/board_types`);
+  typesRef.on('value', async (snapshot) => {
+    const cloudTypes = snapshot.val();
+    if (!cloudTypes) return;
+    try {
+      const typesList = Object.values(cloudTypes).filter(t => t && t.nama);
+      await db.board_types.clear();
+      await db.board_types.bulkAdd(typesList);
+      // Perbarui datalist di form jika sedang terbuka
+      if (typeof refreshBoardTypesDatalist === 'function') {
+        await refreshBoardTypesDatalist();
+      }
+    } catch (e) {
+      console.error('[Board Types Sync Pull Error]', e);
+    }
+  });
 }
 
 // Simpan atau Perbarui Data Papan ke Cloud & IndexedDB
@@ -158,6 +176,21 @@ async function deleteBoardFromCloud(boardId) {
   } catch (err) {
     console.error('[Delete Board Error]', err);
     return false;
+  }
+}
+
+// Simpan semua tipe papan ke Firebase Cloud (sync Laptop ⇄ HP)
+async function saveBoardTypesToCloud(types) {
+  if (!firebaseDb || !syncState.isConnected) return;
+  try {
+    const typesObj = {};
+    types.forEach((t, i) => {
+      typesObj[`type_${t.id || i}`] = { id: t.id, nama: t.nama, urutan: t.urutan || i + 1, created_at: t.created_at || new Date().toISOString() };
+    });
+    const typesRef = firebaseDb.ref(`stores/${currentStorePin}/check_in_out/board_types`);
+    await typesRef.set(typesObj);
+  } catch (err) {
+    console.error('[Save Board Types Error]', err);
   }
 }
 

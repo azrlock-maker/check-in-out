@@ -7,14 +7,19 @@ let appState = {
   filterJenis: 'all',
   cachedBoards: [],
   hasPlayedInitialChime: false,
-  driverMode: localStorage.getItem('inout_driver_mode') === 'true'
+  driverMode: localStorage.getItem('inout_driver_mode') === 'true',
+  isMultiSelect: false,
+  selectedBoardIds: new Set()
 };
 
 // Inisialisasi Aplikasi saat Dokumen Siap
 document.addEventListener('DOMContentLoaded', async () => {
   initTimePickers24();
+  startLiveClock();
   setupEventListeners();
   initFirebaseSync();
+  await ensureBoardTypesSeeded();   // Pastikan tipe papan sudah ada di DB
+  await refreshBoardTypesDatalist(); // Isi datalist dari DB
   await loadAndRenderDashboard();
 
   // Set default form date ke hari ini
@@ -38,6 +43,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderDashboard();
   }, 60000);
 });
+
+// Isi Datalist Jenis Papan dari Database (Dinamis)
+async function refreshBoardTypesDatalist() {
+  const datalist = document.getElementById('list-jenis-papan');
+  if (!datalist) return;
+  const types = await getBoardTypes();
+  datalist.innerHTML = types.map(t => `<option value="${escapeHtml(t.nama)}"></option>`).join('');
+}
 
 // Inisialisasi Komponen Pemilih Jam 24 Jam Eksplisit (Bebas Kebingungan AM/PM)
 function initTimePickers24() {
@@ -68,7 +81,7 @@ function initTimePickers24() {
     { val: '23', label: '23:00 (Larut Malam)' }
   ];
 
-  const minuteOptions = ['00', '15', '30', '45'];
+  const minuteOptions = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
   const prefixes = ['form-jam-antar', 'form-target-jam', 'checkin-jam'];
 
   prefixes.forEach(prefix => {
@@ -248,6 +261,12 @@ function setupEventListeners() {
   const btnImportFinance = document.getElementById('btn-import-finance');
   if (btnImportFinance) {
     btnImportFinance.addEventListener('click', handleImportFinance);
+  }
+
+  // Tombol Kelola Tipe Papan
+  const btnManageTypes = document.getElementById('btn-manage-types');
+  if (btnManageTypes) {
+    btnManageTypes.addEventListener('click', openManageBoardTypesModal);
   }
 }
 
@@ -462,10 +481,15 @@ function createBoardCardHtml(board) {
   return `
     <div class="${cardClass}" id="card-${board.id}">
       <div class="card-top">
-        <div class="card-title-group">
-          <div class="card-nota">🔖 ${safeNota}</div>
-          <div class="card-pemesan">${safePemesan}</div>
-          <div class="card-jenis-badge">🏷️ ${safeJenis}</div>
+        <div style="display: flex; align-items: flex-start; gap: 10px; flex: 1;">
+          ${(!isCompleted && appState.isMultiSelect) ? `
+            <input type="checkbox" class="board-select-check" value="${board.id}" ${appState.selectedBoardIds.has(board.id) ? 'checked' : ''} onchange="toggleBoardSelect('${board.id}')" title="Pilih papan ini" />
+          ` : ''}
+          <div class="card-title-group">
+            <div class="card-nota">🔖 ${safeNota}</div>
+            <div class="card-pemesan">${safePemesan}</div>
+            <div class="card-jenis-badge">🏷️ ${safeJenis}</div>
+          </div>
         </div>
         <div>
           <span class="${statusInfo.badgeClass}">${statusInfo.label}</span>
@@ -534,8 +558,11 @@ function createBoardCardHtml(board) {
             ✅ Kembali
           </button>
         ` : `
-          <button class="btn-card btn-checkin" onclick="openCheckInModal('${board.id}')" title="Tandai Sudah Dijemput">
-            📥 Check IN
+          <button class="btn-card btn-checkin" onclick="quickCheckInCard('${board.id}')" title="Check IN langsung dengan waktu riil saat ini">
+            📥 Check IN (Sekarang)
+          </button>
+          <button class="btn-card btn-secondary" onclick="openCheckInModal('${board.id}')" title="Buka form jika ingin atur jam/tanggal kustom" style="padding:6px; font-size:0.72rem;">
+            ⚙️ Atur
           </button>
         `}
       </div>
@@ -720,15 +747,12 @@ function openCheckInModal(boardId) {
 
   if (tglInput) tglInput.value = getTodayDateStr();
   
+  // Waktu real-time detik ini secara presisi (tanpa pembulatan)
   const now = new Date();
   const curH = String(now.getHours()).padStart(2, '0');
   const curM = String(now.getMinutes()).padStart(2, '0');
-  let roundedM = '00';
-  if (parseInt(curM) >= 45) roundedM = '45';
-  else if (parseInt(curM) >= 30) roundedM = '30';
-  else if (parseInt(curM) >= 15) roundedM = '15';
   
-  setTime24('checkin-jam', curH, roundedM);
+  setTime24('checkin-jam', curH, curM);
 
   if (petugasInput && !petugasInput.value) {
     petugasInput.value = 'Saya Sendiri (Owner)';
@@ -783,6 +807,198 @@ async function handleUndoCheckIn(boardId) {
   await loadAndRenderDashboard();
 }
 
+// ─── Fitur Baru: Jam Berjalan Realtime & Check IN Sekaligus ───────────────────
+
+// Live Clock Ticker setiap 1 detik
+function startLiveClock() {
+  const updateClock = () => {
+    const now = new Date();
+    const h = String(now.getHours()).padStart(2, '0');
+    const m = String(now.getMinutes()).padStart(2, '0');
+    const s = String(now.getSeconds()).padStart(2, '0');
+
+    const fullClock = `${h}:${m}:${s} WIB`;
+    const hmClock = `${h}:${m}`;
+
+    const modalLive = document.getElementById('modal-live-clock-text');
+    if (modalLive) modalLive.textContent = fullClock;
+
+    const bulkLive = document.getElementById('bulk-live-time');
+    if (bulkLive) bulkLive.textContent = hmClock;
+  };
+
+  updateClock();
+  setInterval(updateClock, 1000);
+}
+
+// Set Waktu Modal Check IN langsung ke jam detik ini
+function syncModalTimeToNow() {
+  const now = new Date();
+  const curH = String(now.getHours()).padStart(2, '0');
+  const curM = String(now.getMinutes()).padStart(2, '0');
+  setTime24('checkin-jam', curH, curM);
+  showToast(`⏰ Jam Check IN diset ke waktu sekarang: ${curH}:${curM} WIB`, 'info');
+}
+
+// 1-Sentuhan Langsung Check IN dari Kartu Papan (Waktu Realtime Berjalan)
+async function quickCheckInCard(boardId) {
+  const board = await db.boards.get(boardId);
+  if (!board) return;
+
+  const now = new Date();
+  const tglJemput = getTodayDateStr();
+  const jamJemput = getCurrentTimeStr();
+
+  board.status_jemput = 'SELESAI';
+  board.tgl_jemput = tglJemput;
+  board.jam_jemput = jamJemput;
+  board.petugas_jemput = 'Saya Sendiri (Owner)';
+
+  await saveBoardToCloud(board);
+  NotificationManager.playChime(false);
+  showToast(`📥 Papan #${board.no_nota || board.id} berhasil di-Check IN pada ${jamJemput} WIB!`, 'success');
+  await loadAndRenderDashboard();
+}
+
+// Check IN SEMUA Papan Sekaligus berdasarkan Kategori (misal 'overdue' / Telat)
+async function handleBulkCheckIn(filterType = 'overdue') {
+  const allBoards = await db.boards.toArray();
+  const targets = allBoards.filter(b => {
+    if (b.status_jemput === 'SELESAI') return false;
+    const s = calculateBoardStatus(b);
+    if (filterType === 'overdue') return s.status === 'OVERDUE';
+    if (filterType === 'today') return s.status === 'TODAY';
+    return true;
+  });
+
+  if (targets.length === 0) {
+    alert('Tidak ada papan yang perlu di-Check IN untuk kategori ini.');
+    return;
+  }
+
+  const nowTime = getCurrentTimeStr();
+  const confirmMsg = `Konfirmasi Check IN SEKALIGUS ${targets.length} papan bunga?\n\n• Waktu Check IN: Hari Ini, ${nowTime} WIB (Waktu Riil)\n• Petugas: Saya Sendiri (Owner)\n\nSemua papan telat ini akan ditandai sudah kembali ke toko. Lanjutkan?`;
+  
+  if (!confirm(confirmMsg)) return;
+
+  const tglJemput = getTodayDateStr();
+  for (const b of targets) {
+    b.status_jemput = 'SELESAI';
+    b.tgl_jemput = tglJemput;
+    b.jam_jemput = nowTime;
+    b.petugas_jemput = 'Saya Sendiri (Owner)';
+    await saveBoardToCloud(b);
+  }
+
+  NotificationManager.playChime(false);
+  showToast(`✅ ${targets.length} papan telat berhasil di-Check IN serentak pada ${nowTime} WIB!`, 'success');
+  await loadAndRenderDashboard();
+}
+
+// Toggle Mode Pilih Banyak (Multi-Select Checkboxes)
+function toggleMultiSelectMode() {
+  appState.isMultiSelect = !appState.isMultiSelect;
+  if (!appState.isMultiSelect) {
+    appState.selectedBoardIds.clear();
+  }
+  const btnToggle = document.getElementById('btn-toggle-select');
+  if (btnToggle) {
+    btnToggle.textContent = appState.isMultiSelect ? '✕ Tutup Pilihan' : '☑️ Pilih Sekaligus';
+    btnToggle.classList.toggle('active', appState.isMultiSelect);
+  }
+  updateBulkBarUI();
+  renderBoardCards();
+}
+
+// Toggle checklist kartu individual
+function toggleBoardSelect(boardId) {
+  if (appState.selectedBoardIds.has(boardId)) {
+    appState.selectedBoardIds.delete(boardId);
+  } else {
+    appState.selectedBoardIds.add(boardId);
+  }
+  updateBulkBarUI();
+}
+
+// Pilih Semua Papan yang Sedang Tampil di Layar
+function toggleSelectAllVisible() {
+  const visibleCheckboxes = document.querySelectorAll('.board-select-check');
+  const allChecked = Array.from(visibleCheckboxes).every(cb => cb.checked);
+
+  visibleCheckboxes.forEach(cb => {
+    cb.checked = !allChecked;
+    if (!allChecked) {
+      appState.selectedBoardIds.add(cb.value);
+    } else {
+      appState.selectedBoardIds.delete(cb.value);
+    }
+  });
+
+  const btnAll = document.getElementById('btn-select-all-text');
+  if (btnAll) {
+    btnAll.textContent = allChecked ? 'Pilih Semua' : 'Batal Semua';
+  }
+  updateBulkBarUI();
+}
+
+// Batalkan Pilihan Multi-Select
+function cancelMultiSelect() {
+  appState.isMultiSelect = false;
+  appState.selectedBoardIds.clear();
+  const btnToggle = document.getElementById('btn-toggle-select');
+  if (btnToggle) {
+    btnToggle.textContent = '☑️ Pilih Sekaligus';
+    btnToggle.classList.remove('active');
+  }
+  updateBulkBarUI();
+  renderBoardCards();
+}
+
+// Perbarui Tampilan Floating Bar Multi-Select
+function updateBulkBarUI() {
+  const bar = document.getElementById('bulk-action-bar');
+  const countText = document.getElementById('bulk-count-text');
+  if (!bar || !countText) return;
+
+  const count = appState.selectedBoardIds.size;
+  if (appState.isMultiSelect && count > 0) {
+    bar.style.display = 'flex';
+    countText.textContent = `${count} Papan`;
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+// Eksekusi Check IN untuk Seluruh Papan yang Dicentang
+async function handleExecuteBulkCheckIn() {
+  if (appState.selectedBoardIds.size === 0) {
+    showToast('Pilih minimal 1 papan untuk di-Check IN.', 'warning');
+    return;
+  }
+
+  const count = appState.selectedBoardIds.size;
+  const nowTime = getCurrentTimeStr();
+  const confirmMsg = `Check IN ${count} papan terpilih sekaligus pada jam ${nowTime} WIB?`;
+  if (!confirm(confirmMsg)) return;
+
+  const tglJemput = getTodayDateStr();
+  for (const id of appState.selectedBoardIds) {
+    const b = await db.boards.get(id);
+    if (b) {
+      b.status_jemput = 'SELESAI';
+      b.tgl_jemput = tglJemput;
+      b.jam_jemput = nowTime;
+      b.petugas_jemput = 'Saya Sendiri (Owner)';
+      await saveBoardToCloud(b);
+    }
+  }
+
+  NotificationManager.playChime(false);
+  showToast(`✅ ${count} papan berhasil di-Check IN serentak pada ${nowTime} WIB!`, 'success');
+  cancelMultiSelect();
+  await loadAndRenderDashboard();
+}
+
 // Kirim Tugas Jemput via WhatsApp
 function handleSendWaTask(boardId) {
   const board = appState.cachedBoards.find(b => b.id === boardId);
@@ -830,6 +1046,110 @@ async function handleImportFinance() {
       btn.textContent = '📥 Impor dari Pesanan Finance';
     }
   }
+}
+
+// ─── Modal Kelola Tipe Papan (dari Database) ───────────────────────────────
+
+function openManageBoardTypesModal() {
+  const modal = document.getElementById('modal-manage-types');
+  if (!modal) return;
+  modal.classList.add('active');
+  renderManageBoardTypesList();
+}
+
+function closeManageBoardTypesModal() {
+  const modal = document.getElementById('modal-manage-types');
+  if (modal) modal.classList.remove('active');
+}
+
+async function renderManageBoardTypesList() {
+  const listEl = document.getElementById('manage-types-list');
+  if (!listEl) return;
+
+  const types = await getBoardTypes();
+
+  if (types.length === 0) {
+    listEl.innerHTML = `<div style="color:var(--text-dim); text-align:center; padding: 20px; font-size:0.85rem;">
+      Belum ada tipe papan. Tambahkan di bawah atau klik Reset Default.
+    </div>`;
+    return;
+  }
+
+  listEl.innerHTML = types.map(t => `
+    <div class="type-item" id="type-item-${t.id}">
+      <span class="type-item-name" id="type-name-${t.id}">${escapeHtml(t.nama)}</span>
+      <div class="type-item-actions">
+        <button class="btn-type-edit" onclick="handleStartRenameBoardType(${t.id})" title="Ubah nama tipe ini">✏️</button>
+        <button class="btn-type-delete" onclick="handleDeleteBoardType(${t.id}, '${escapeHtml(t.nama)}')" title="Hapus tipe ini">🗑️</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function handleAddBoardType() {
+  const input = document.getElementById('input-new-board-type');
+  if (!input) return;
+  const nama = input.value.trim();
+  if (!nama) {
+    showToast('⚠️ Nama tipe papan tidak boleh kosong.', 'warning');
+    return;
+  }
+
+  const id = await addBoardType(nama);
+  if (id === null) {
+    showToast(`⚠️ Tipe "${nama}" sudah ada dalam daftar.`, 'warning');
+    return;
+  }
+
+  input.value = '';
+  showToast(`✅ Tipe "${nama}" berhasil ditambahkan!`, 'success');
+  // Sinkronisasi ke Firebase
+  const updatedTypes = await getBoardTypes();
+  await saveBoardTypesToCloud(updatedTypes);
+  await refreshBoardTypesDatalist();
+  renderManageBoardTypesList();
+}
+
+async function handleDeleteBoardType(id, nama) {
+  if (!confirm(`Hapus tipe papan "${nama}"?\n\nData papan yang sudah menggunakan tipe ini tidak akan terpengaruh.`)) return;
+
+  await deleteBoardType(id);
+  showToast(`🗑️ Tipe "${nama}" dihapus.`, 'info');
+  const updatedTypes = await getBoardTypes();
+  await saveBoardTypesToCloud(updatedTypes);
+  await refreshBoardTypesDatalist();
+  renderManageBoardTypesList();
+}
+
+async function handleStartRenameBoardType(id) {
+  const nameEl = document.getElementById(`type-name-${id}`);
+  if (!nameEl) return;
+
+  const currentName = nameEl.textContent;
+  const newName = prompt(`Ubah nama tipe papan:\n\n"${currentName}"\n\nNama baru:`, currentName);
+  if (!newName || newName.trim() === '' || newName.trim() === currentName) return;
+
+  const ok = await renameBoardType(id, newName.trim());
+  if (ok) {
+    showToast(`✅ Nama tipe diubah menjadi "${newName.trim()}".`, 'success');
+    const updatedTypes = await getBoardTypes();
+    await saveBoardTypesToCloud(updatedTypes);
+    await refreshBoardTypesDatalist();
+    renderManageBoardTypesList();
+  } else {
+    showToast('❌ Gagal mengubah nama tipe.', 'error');
+  }
+}
+
+async function handleResetBoardTypes() {
+  if (!confirm('Reset semua tipe papan kembali ke daftar default bawaan?\n\nSeluruh tipe papan kustom Anda akan dihapus.')) return;
+
+  await resetBoardTypesToDefault();
+  showToast('🔄 Tipe papan direset ke default.', 'info');
+  const updatedTypes = await getBoardTypes();
+  await saveBoardTypesToCloud(updatedTypes);
+  await refreshBoardTypesDatalist();
+  renderManageBoardTypesList();
 }
 
 // Modal Pengaturan
