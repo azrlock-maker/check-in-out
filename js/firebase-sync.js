@@ -198,80 +198,115 @@ async function saveBoardTypesToCloud(types) {
 // 100% Aman: Hanya menyalin data papan yang sedang 'Papan Di Antar' tanpa mengubah database Finance
 async function importFromAkioFinancePesanan() {
   if (!firebaseDb) {
-    throw new Error('Koneksi database cloud belum siap.');
+    throw new Error('Koneksi database cloud belum siap. Pastikan terhubung ke internet.');
   }
 
+  // Baca dari node pesanan Finance (jalur: stores/{PIN}/pesanan)
   const financePesananRef = firebaseDb.ref(`stores/${currentStorePin}/pesanan`);
   const snap = await financePesananRef.once('value');
   const financeData = snap.val();
 
   if (!financeData) {
-    return { count: 0, message: 'Tidak ditemukan data pesanan di aplikasi Finance untuk PIN ini.' };
+    return { count: 0, message: `Tidak ditemukan data pesanan di aplikasi Finance.\n\nPastikan:\n• PIN Cloud sama dengan PIN di Finance (sekarang: ${currentStorePin})\n• Aplikasi Finance sudah pernah disinkronkan ke cloud` };
   }
 
-  const orders = Object.values(financeData);
+  const orders = Object.values(financeData).filter(o => o && o.id);
+
+  // Filter hanya pesanan yang berstatus 'Papan Di Antar' (belum dijemput kembali)
+  const antarOrders = orders.filter(o => o.status_proses === 'Papan Di Antar');
+
+  if (antarOrders.length === 0) {
+    return {
+      count: 0,
+      message: `Tidak ada pesanan berstatus "Papan Di Antar" di Finance saat ini.\n\nTotal pesanan di Finance: ${orders.length} pesanan.\nImpor hanya dilakukan untuk papan yang sudah diantar dan belum dijemput.`
+    };
+  }
+
   let importedCount = 0;
+  let updatedCount = 0;
 
-  for (const ord of orders) {
-    if (!ord) continue;
-
-    // Cek apakah sudah pernah ada di database Check IN/OUT
-    const existing = await db.boards.where('no_nota').equals(ord.no_nota || '').first();
-    if (existing) continue;
-
-    // Tentukan jenis acara dari ucapan/tipe
+  for (const ord of antarOrders) {
+    // Tentukan jenis acara dari ucapan/tipe papan secara otomatis
     let detectedAcara = 'Pesta / Pernikahan';
     let durationDays = 1;
     const lowerUcapan = (ord.ucapan || '').toLowerCase();
-    const lowerJenis = (ord.jenis_papan || '').toLowerCase();
 
-    if (lowerUcapan.includes('duka') || lowerUcapan.includes('belasungkawa') || lowerUcapan.includes('rip') || lowerUcapan.includes('meninggal')) {
-      detectedAcara = 'Duka Cita';
+    if (lowerUcapan.includes('duka') || lowerUcapan.includes('belasungkawa') ||
+        lowerUcapan.includes('rip') || lowerUcapan.includes('meninggal') ||
+        lowerUcapan.includes('berpulang') || lowerUcapan.includes('wafat')) {
+      detectedAcara = 'Duka Cita / Rumah Duka';
       durationDays = 3;
-    } else if (lowerUcapan.includes('opening') || lowerUcapan.includes('peresmian') || lowerUcapan.includes('sukses') || lowerUcapan.includes('buka')) {
-      detectedAcara = 'Grand Opening';
+    } else if (lowerUcapan.includes('opening') || lowerUcapan.includes('peresmian') ||
+               lowerUcapan.includes('grand') || lowerUcapan.includes('buka') ||
+               lowerUcapan.includes('launching')) {
+      detectedAcara = 'Grand Opening / Peresmian Toko';
       durationDays = 2;
     }
 
-    // Hitung target tanggal jemput
+    // Gunakan field name yang tepat sesuai skema Finance DB:
+    // tanggal_antar, no_wa (bukan no_wa_pemesan), lokasi_pengantaran
     const tglAntar = ord.tanggal_antar || ord.tanggal || getTodayDateStr();
     const tglAntarDate = new Date(tglAntar);
     const targetDate = new Date(tglAntarDate);
     targetDate.setDate(targetDate.getDate() + durationDays);
     const targetDateStr = targetDate.toISOString().split('T')[0];
 
-    const newBoard = {
-      id: 'B-' + (ord.no_nota ? ord.no_nota.replace(/[^a-zA-Z0-9]/g, '') : Date.now()),
-      no_nota: ord.no_nota || '',
+    // ID unik berdasarkan no_nota Finance agar tidak duplikat
+    const boardId = 'FIN-' + (ord.no_nota ? ord.no_nota.replace(/[^a-zA-Z0-9]/g, '') : String(ord.id));
+
+    // Cek apakah sudah ada di database IN/OUT
+    const existing = await db.boards.get(boardId);
+
+    // Jika sudah ada dan sudah di-Check IN (SELESAI), skip — jangan timpa
+    if (existing && existing.status_jemput === 'SELESAI') continue;
+
+    const boardObj = {
+      id: boardId,
+      no_nota: ord.no_nota || String(ord.id),
       nama_pemesan: ord.nama_pemesan || 'Tanpa Nama',
-      no_wa_pemesan: ord.no_wa || '',
-      jenis_papan: ord.jenis_papan || 'Papan Standar',
+      no_wa_pemesan: ord.no_wa || '',                    // field 'no_wa' di Finance
+      jenis_papan: ord.jenis_papan || 'Papan Bunga',
       jenis_acara: detectedAcara,
       durasi_hari: durationDays,
       ucapan: ord.ucapan || '',
-      lokasi: ord.lokasi_pengantaran || '',
-      gps_lat: ord.gps_lat || null,
-      gps_lng: ord.gps_lng || null,
+      lokasi: ord.lokasi_pengantaran || '',               // field 'lokasi_pengantaran' di Finance
+      gps_lat: ord.gps_lat ? parseFloat(ord.gps_lat) : null,
+      gps_lng: ord.gps_lng ? parseFloat(ord.gps_lng) : null,
       tgl_antar: tglAntar,
-      jam_antar: '09:00',
-      target_tgl_jemput: targetDateStr,
-      target_jam_jemput: '18:00',
-      status_jemput: ord.status_proses === 'Selesai' ? 'SELESAI' : 'BELUM',
-      foto_antar: null,
+      jam_antar: ord.jam_antar || '09:00',
+      target_tgl_jemput: existing ? (existing.target_tgl_jemput || targetDateStr) : targetDateStr,
+      target_jam_jemput: existing ? (existing.target_jam_jemput || '18:00') : '18:00',
+      status_jemput: existing ? existing.status_jemput : 'BELUM',
+      foto_antar: existing ? existing.foto_antar : null,
       foto_jemput: null,
-      petugas_antar: 'Armada',
-      petugas_jemput: '',
-      catatan: 'Diimpor otomatis dari Pesanan Finance'
+      petugas_antar: '',
+      petugas_jemput: existing ? existing.petugas_jemput : '',
+      tgl_jemput: existing ? existing.tgl_jemput : null,
+      jam_jemput: existing ? existing.jam_jemput : null,
+      catatan: existing ? existing.catatan : 'Diimpor otomatis dari Pesanan Finance'
     };
 
-    await saveBoardToCloud(newBoard);
-    importedCount++;
+    await saveBoardToCloud(boardObj);
+
+    if (existing) {
+      updatedCount++;
+    } else {
+      importedCount++;
+    }
   }
 
-  return {
-    count: importedCount,
-    message: `Berhasil mengimpor ${importedCount} data papan dari sistem Finance!`
-  };
+  let msg = '';
+  if (importedCount > 0 && updatedCount > 0) {
+    msg = `✅ Impor selesai!\n• ${importedCount} data baru ditambahkan\n• ${updatedCount} data yang sudah ada diperbarui\n\nTotal di Finance (Papan Di Antar): ${antarOrders.length}`;
+  } else if (importedCount > 0) {
+    msg = `✅ Berhasil mengimpor ${importedCount} data papan baru dari Finance!`;
+  } else if (updatedCount > 0) {
+    msg = `🔄 ${updatedCount} data papan sudah ada dan berhasil diperbarui dari Finance.`;
+  } else {
+    msg = `ℹ️ Semua ${antarOrders.length} papan dari Finance sudah ada di daftar dan sudah di-Check IN. Tidak ada yang perlu diperbarui.`;
+  }
+
+  return { count: importedCount + updatedCount, message: msg };
 }
 
 // Update tampilan badge status sinkronisasi di UI

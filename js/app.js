@@ -440,10 +440,18 @@ function renderBoardCards() {
       return (statusB.diffHoursTotal || 0) - (statusA.diffHoursTotal || 0);
     }
 
-    // Urutkan berdasarkan target jemput terdekat
-    const timeA = new Date(`${a.target_tgl_jemput || '9999-99-99'}T${a.target_jam_jemput || '18:00'}`).getTime();
-    const timeB = new Date(`${b.target_tgl_jemput || '9999-99-99'}T${b.target_jam_jemput || '18:00'}`).getTime();
-    return timeA - timeB;
+    // Urutkan berdasarkan target jemput terdekat.
+    // Papan tanpa target_tgl_jemput diurutkan berdasarkan tgl_antar + durasi default (bukan 9999)
+    const getTargetTime = (board) => {
+      if (board.target_tgl_jemput) {
+        return new Date(`${board.target_tgl_jemput}T${board.target_jam_jemput || '18:00'}`).getTime();
+      }
+      // Fallback: pakai tgl_antar + 1 hari jika tidak ada target
+      const base = new Date(board.tgl_antar || getTodayDateStr());
+      base.setDate(base.getDate() + 1);
+      return base.getTime();
+    };
+    return getTargetTime(a) - getTargetTime(b);
   });
 
   if (filtered.length === 0) {
