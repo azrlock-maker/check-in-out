@@ -86,45 +86,6 @@
   <!-- Main Container -->
   <main class="container">
 
-    <!-- Quick Statistics Bar -->
-    <section class="stats-grid">
-      <!-- Stat 1: Overdue -->
-      <div class="stat-card" onclick="document.querySelector('.tab-btn[data-tab=\'overdue\']').click()">
-        <div class="stat-icon-wrapper stat-icon-red">🚨</div>
-        <div class="stat-content">
-          <div class="stat-value" id="stat-count-overdue">0</div>
-          <div class="stat-label">Lewat Batas Jemput</div>
-        </div>
-      </div>
-
-      <!-- Stat 2: Today -->
-      <div class="stat-card" onclick="document.querySelector('.tab-btn[data-tab=\'today\']').click()">
-        <div class="stat-icon-wrapper stat-icon-amber">⏰</div>
-        <div class="stat-content">
-          <div class="stat-value" id="stat-count-today">0</div>
-          <div class="stat-label">Target Hari Ini</div>
-        </div>
-      </div>
-
-      <!-- Stat 3: Active In Field -->
-      <div class="stat-card" onclick="document.querySelector('.tab-btn[data-tab=\'active\']').click()">
-        <div class="stat-icon-wrapper stat-icon-blue">🌿</div>
-        <div class="stat-content">
-          <div class="stat-value" id="stat-count-active">0</div>
-          <div class="stat-label">Sedang Terpasang</div>
-        </div>
-      </div>
-
-      <!-- Stat 4: Completed -->
-      <div class="stat-card" onclick="document.querySelector('.tab-btn[data-tab=\'completed\']').click()">
-        <div class="stat-icon-wrapper stat-icon-green">✅</div>
-        <div class="stat-content">
-          <div class="stat-value" id="stat-count-completed">0</div>
-          <div class="stat-label">Sudah Check IN</div>
-        </div>
-      </div>
-    </section>
-
     <!-- Toolbar: Search, Filter, & Extra Actions -->
     <div class="action-toolbar">
       <div class="search-box">
@@ -158,15 +119,15 @@
       </button>
       <button class="tab-btn" data-tab="today">
         <span>⏰ Target Hari Ini</span>
-        <span class="tab-badge" id="badge-tab-today">0</span>
+        <span class="tab-badge badge-amber" id="badge-tab-today">0</span>
       </button>
       <button class="tab-btn" data-tab="active">
         <span>🌿 Masih Terpasang</span>
-        <span class="tab-badge" id="badge-tab-active">0</span>
+        <span class="tab-badge badge-blue" id="badge-tab-active">0</span>
       </button>
       <button class="tab-btn" data-tab="completed">
         <span>✅ Selesai Check IN</span>
-        <span class="tab-badge" id="badge-tab-completed">0</span>
+        <span class="tab-badge badge-green" id="badge-tab-completed">0</span>
       </button>
       <button class="tab-btn" data-tab="all">
         <span>📋 Semua Papan</span>

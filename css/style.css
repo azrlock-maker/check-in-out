@@ -513,16 +513,39 @@ body {
 
 .tab-badge {
   background: rgba(255, 255, 255, 0.1);
-  padding: 2px 7px;
+  color: var(--text-main);
+  padding: 2px 8px;
   border-radius: var(--radius-full);
-  font-size: 0.72rem;
+  font-size: 0.74rem;
   font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
 }
 
 .tab-badge.badge-red {
   background: var(--danger);
   color: #ffffff;
-  animation: pulse-dot 2s infinite;
+  box-shadow: 0 2px 8px rgba(244, 63, 94, 0.4);
+}
+
+.tab-badge.badge-amber {
+  background: rgba(245, 158, 11, 0.25);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.tab-badge.badge-blue {
+  background: rgba(14, 165, 233, 0.25);
+  color: #38bdf8;
+  border: 1px solid rgba(14, 165, 233, 0.4);
+}
+
+.tab-badge.badge-green {
+  background: rgba(16, 185, 129, 0.25);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
 }
 
 /* Cards Grid (Board List) */

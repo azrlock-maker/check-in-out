@@ -427,30 +427,76 @@ function renderBoardCards() {
     });
   }
 
-  // Urutkan: Paling mendesak (overdue paling lama) berada paling atas
+  // Helper: Waktu Check IN untuk tab 'completed' (terbaru di-check-in paling atas)
+  const getCheckInTime = (board) => {
+    if (board.tgl_jemput) {
+      const timePart = board.jam_jemput ? (board.jam_jemput.length === 5 ? board.jam_jemput + ':00' : board.jam_jemput) : '00:00:00';
+      const t = new Date(`${board.tgl_jemput}T${timePart}`).getTime();
+      if (!isNaN(t)) return t;
+    }
+    if (board.updated_at) {
+      const t = new Date(board.updated_at).getTime();
+      if (!isNaN(t)) return t;
+    }
+    return 0;
+  };
+
+  // Helper: Waktu Input / Antar untuk tab 'all' (terbaru diinput/diantar paling atas)
+  const getInputOrAntarTime = (board) => {
+    if (board.created_at) {
+      const t = new Date(board.created_at).getTime();
+      if (!isNaN(t)) return t;
+    }
+    if (board.tgl_antar) {
+      const timePart = board.jam_antar ? (board.jam_antar.length === 5 ? board.jam_antar + ':00' : board.jam_antar) : '09:00:00';
+      const t = new Date(`${board.tgl_antar}T${timePart}`).getTime();
+      if (!isNaN(t)) return t;
+    }
+    if (board.id && board.id.startsWith('B-')) {
+      const num = parseInt(board.id.slice(2));
+      if (!isNaN(num) && num > 1000000000) return num;
+    }
+    return 0;
+  };
+
+  // Helper: Target Waktu Jemput untuk tab operasional (overdue / today / active)
+  const getTargetTime = (board) => {
+    if (board.target_tgl_jemput) {
+      const timePart = board.target_jam_jemput ? (board.target_jam_jemput.length === 5 ? board.target_jam_jemput + ':00' : board.target_jam_jemput) : '18:00:00';
+      const t = new Date(`${board.target_tgl_jemput}T${timePart}`).getTime();
+      if (!isNaN(t)) return t;
+    }
+    const base = new Date(board.tgl_antar || getTodayDateStr());
+    base.setDate(base.getDate() + 1);
+    return base.getTime();
+  };
+
+  // ─── Urutkan Kartu Sesuai Karakteristik Tab ──────────────────────────────
   filtered.sort((a, b) => {
+    // 1. Tab Selesai Check IN: Tampilkan papan yang BARU SAJA di-Check IN paling atas (Descending)
+    if (appState.activeTab === 'completed') {
+      return getCheckInTime(b) - getCheckInTime(a);
+    }
+
+    // 2. Tab Semua Papan: Tampilkan papan yang PALING BARU diinput / diantar paling atas (Descending)
+    if (appState.activeTab === 'all') {
+      return getInputOrAntarTime(b) - getInputOrAntarTime(a);
+    }
+
+    // 3. Tab Khusus Operasional (Overdue / Today / Active):
     const statusA = calculateBoardStatus(a);
     const statusB = calculateBoardStatus(b);
 
+    // Prioritaskan status OVERDUE di atas status lainnya
     if (statusA.status === 'OVERDUE' && statusB.status !== 'OVERDUE') return -1;
     if (statusB.status === 'OVERDUE' && statusA.status !== 'OVERDUE') return 1;
 
-    // Jika sama-sama overdue, bandingkan selisih keterlambatan
+    // Jika sama-sama overdue, urutkan selisih keterlambatan terlama paling atas
     if (statusA.status === 'OVERDUE' && statusB.status === 'OVERDUE') {
       return (statusB.diffHoursTotal || 0) - (statusA.diffHoursTotal || 0);
     }
 
-    // Urutkan berdasarkan target jemput terdekat.
-    // Papan tanpa target_tgl_jemput diurutkan berdasarkan tgl_antar + durasi default (bukan 9999)
-    const getTargetTime = (board) => {
-      if (board.target_tgl_jemput) {
-        return new Date(`${board.target_tgl_jemput}T${board.target_jam_jemput || '18:00'}`).getTime();
-      }
-      // Fallback: pakai tgl_antar + 1 hari jika tidak ada target
-      const base = new Date(board.tgl_antar || getTodayDateStr());
-      base.setDate(base.getDate() + 1);
-      return base.getTime();
-    };
+    // Untuk tab Today & Active: urutkan target jemput terdekat (Ascending)
     return getTargetTime(a) - getTargetTime(b);
   });
 
