@@ -106,12 +106,12 @@
           ☑️ Pilih Sekaligus
         </button>
         <button class="btn btn-secondary" id="btn-import-finance" title="Impor otomatis pesanan dari aplikasi Akio Finance">
-          📥 Impor dari Finance
+          📥 Impor Finance
         </button>
       </div>
     </div>
 
-    <!-- Status Tabs -->
+    <!-- Status Tabs (Desktop View) -->
     <nav class="tabs-wrapper">
       <button class="tab-btn active" data-tab="overdue">
         <span>🚨 Lewat Batas Jemput</span>
@@ -151,24 +151,28 @@
   <nav class="bottom-nav">
     <button class="nav-item active" data-tab="overdue">
       <span class="nav-icon">🚨</span>
-      <span>Darurat</span>
-      <span class="nav-dot-badge" id="nav-dot-overdue" style="display:none;"></span>
+      <span class="nav-label">Telat</span>
+      <span class="nav-badge badge-red" id="nav-badge-overdue">0</span>
     </button>
     <button class="nav-item" data-tab="today">
       <span class="nav-icon">⏰</span>
-      <span>Hari Ini</span>
+      <span class="nav-label">Hari Ini</span>
+      <span class="nav-badge badge-amber" id="nav-badge-today">0</span>
     </button>
     <button class="nav-item" data-tab="active">
       <span class="nav-icon">🌿</span>
-      <span>Di Luar</span>
+      <span class="nav-label">Di Luar</span>
+      <span class="nav-badge badge-blue" id="nav-badge-active">0</span>
     </button>
     <button class="nav-item" data-tab="completed">
       <span class="nav-icon">✅</span>
-      <span>Selesai</span>
+      <span class="nav-label">Selesai</span>
+      <span class="nav-badge badge-green" id="nav-badge-completed">0</span>
     </button>
     <button class="nav-item" data-tab="all">
       <span class="nav-icon">📋</span>
-      <span>Semua</span>
+      <span class="nav-label">Semua</span>
+      <span class="nav-badge" id="nav-badge-all">0</span>
     </button>
   </nav>
 

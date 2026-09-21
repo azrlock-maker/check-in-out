@@ -357,6 +357,19 @@ function renderDashboard() {
   if (badgeCompleted) badgeCompleted.textContent = countCompleted;
   if (badgeAll) badgeAll.textContent = boards.length;
 
+  // Perbarui Mobile Bottom Nav Badges
+  const navBadgeOverdue = document.getElementById('nav-badge-overdue');
+  const navBadgeToday = document.getElementById('nav-badge-today');
+  const navBadgeActive = document.getElementById('nav-badge-active');
+  const navBadgeCompleted = document.getElementById('nav-badge-completed');
+  const navBadgeAll = document.getElementById('nav-badge-all');
+
+  if (navBadgeOverdue) navBadgeOverdue.textContent = countOverdue;
+  if (navBadgeToday) navBadgeToday.textContent = countToday;
+  if (navBadgeActive) navBadgeActive.textContent = countActive;
+  if (navBadgeCompleted) navBadgeCompleted.textContent = countCompleted;
+  if (navBadgeAll) navBadgeAll.textContent = boards.length;
+
   // Banner Peringatan Darurat Overdue
   const urgentBanner = document.getElementById('urgent-banner');
   const urgentText = document.getElementById('urgent-banner-text');
@@ -593,31 +606,37 @@ function createBoardCardHtml(board) {
       </div>` : ''}
 
       <div class="card-actions">
-        ${mapsUrl ? `
-          <button class="btn-card btn-maps" onclick="window.open('${mapsUrl}', '_blank')" title="Navigasi Google Maps">
-            📍 Maps
-          </button>
-        ` : `
-          <button class="btn-card btn-maps" disabled style="opacity:0.4;">
-            📍 No Maps
-          </button>
-        `}
+        <div class="card-action-row">
+          ${mapsUrl ? `
+            <button class="btn-card btn-maps" onclick="window.open('${mapsUrl}', '_blank')" title="Navigasi Google Maps">
+              📍 Buka Maps
+            </button>
+          ` : `
+            <button class="btn-card btn-maps" disabled style="opacity:0.4;">
+              📍 Lokasi Belum Ada
+            </button>
+          `}
 
-        <button class="btn-card btn-wa-dispatch" onclick="handleSendWaTask('${board.id}')" title="Kirim Tugas Jemput ke WhatsApp">
-          💬 WA Jemput
-        </button>
+          <button class="btn-card btn-wa-dispatch" onclick="handleSendWaTask('${board.id}')" title="Kirim Tugas Jemput ke WhatsApp Driver / Pemesan">
+            💬 WA Jemput
+          </button>
+        </div>
 
         ${isCompleted ? `
-          <button class="btn-card btn-checked" onclick="handleUndoCheckIn('${board.id}')" title="Batal Check IN jika keliru">
-            ✅ Kembali
-          </button>
+          <div class="card-action-row">
+            <button class="btn-card btn-checked" onclick="handleUndoCheckIn('${board.id}')" title="Batal Check IN jika keliru" style="width: 100%;">
+              ↩️ Batalkan Selesai (Kembalikan ke Belum Jemput)
+            </button>
+          </div>
         ` : `
-          <button class="btn-card btn-checkin" onclick="quickCheckInCard('${board.id}')" title="Check IN langsung dengan waktu riil saat ini">
-            📥 Check IN (Sekarang)
-          </button>
-          <button class="btn-card btn-secondary" onclick="openCheckInModal('${board.id}')" title="Buka form jika ingin atur jam/tanggal kustom" style="padding:6px; font-size:0.72rem;">
-            ⚙️ Atur
-          </button>
+          <div class="card-action-row card-checkin-row">
+            <button class="btn-card btn-checkin" onclick="quickCheckInCard('${board.id}')" title="Check IN langsung dengan waktu riil saat ini">
+              📥 Check IN Sekarang
+            </button>
+            <button class="btn-card btn-secondary btn-tune" onclick="openCheckInModal('${board.id}')" title="Atur jam atau tanggal jemput kustom">
+              ⚙️
+            </button>
+          </div>
         `}
       </div>
     </div>
