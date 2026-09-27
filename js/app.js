@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await ensureBoardTypesSeeded();   // Pastikan tipe papan sudah ada di DB
   await refreshBoardTypesDatalist(); // Isi datalist dari DB
   await loadAndRenderDashboard();
+  await seedFinishedBlacklist();    // Daftarkan papan SELESAI existing ke blacklist Finance
 
   // Set default form date ke hari ini
   const tglAntarInput = document.getElementById('form-tgl-antar');
@@ -856,6 +857,7 @@ async function handleConfirmCheckIn() {
   board.petugas_jemput = petugasJemput;
 
   await saveBoardToCloud(board);
+  if (typeof markFinanceOrderAsFinished === 'function') markFinanceOrderAsFinished(board); // Blacklist Finance
   NotificationManager.playChime(false); // Bunyikan nada sukses
   showToast(`📥 Papan #${board.no_nota || board.id} berhasil di-Check IN kembali ke toko!`, 'success');
 
@@ -876,6 +878,7 @@ async function handleUndoCheckIn(boardId) {
   board.petugas_jemput = null;
 
   await saveBoardToCloud(board);
+  if (typeof unmarkFinanceOrderAsFinished === 'function') unmarkFinanceOrderAsFinished(board); // Hapus dari blacklist
   showToast('Status papan dikembalikan menjadi Belum Dijemput.', 'info');
   await loadAndRenderDashboard();
 }
@@ -918,7 +921,6 @@ async function quickCheckInCard(boardId) {
   const board = await db.boards.get(boardId);
   if (!board) return;
 
-  const now = new Date();
   const tglJemput = getTodayDateStr();
   const jamJemput = getCurrentTimeStr();
 
@@ -928,6 +930,7 @@ async function quickCheckInCard(boardId) {
   board.petugas_jemput = 'Saya Sendiri (Owner)';
 
   await saveBoardToCloud(board);
+  if (typeof markFinanceOrderAsFinished === 'function') markFinanceOrderAsFinished(board); // Blacklist Finance
   NotificationManager.playChime(false);
   showToast(`📥 Papan #${board.no_nota || board.id} berhasil di-Check IN pada ${jamJemput} WIB!`, 'success');
   await loadAndRenderDashboard();
@@ -961,6 +964,7 @@ async function handleBulkCheckIn(filterType = 'overdue') {
     b.jam_jemput = nowTime;
     b.petugas_jemput = 'Saya Sendiri (Owner)';
     await saveBoardToCloud(b);
+    if (typeof markFinanceOrderAsFinished === 'function') markFinanceOrderAsFinished(b); // Blacklist Finance
   }
 
   NotificationManager.playChime(false);
@@ -1063,6 +1067,7 @@ async function handleExecuteBulkCheckIn() {
       b.jam_jemput = nowTime;
       b.petugas_jemput = 'Saya Sendiri (Owner)';
       await saveBoardToCloud(b);
+      if (typeof markFinanceOrderAsFinished === 'function') markFinanceOrderAsFinished(b); // Blacklist Finance
     }
   }
 

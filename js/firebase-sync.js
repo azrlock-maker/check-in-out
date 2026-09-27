@@ -135,6 +135,9 @@ function attachCloudListeners() {
       console.error('[Board Types Sync Pull Error]', e);
     }
   });
+
+  // 3. Listener Realtime Otomatis: Pantau Pesanan dari Finance Akio (Auto-Sync < 1 detik)
+  attachFinanceAutoSyncListener();
 }
 
 // Simpan atau Perbarui Data Papan ke Cloud & IndexedDB
@@ -194,38 +197,111 @@ async function saveBoardTypesToCloud(types) {
   }
 }
 
-// Fitur Baca / Impor Aman dari Pesanan Finance Akio (Read-Only)
-// 100% Aman: Hanya menyalin data papan yang sedang 'Papan Di Antar' tanpa mengubah database Finance
-async function importFromAkioFinancePesanan() {
-  if (!firebaseDb) {
-    throw new Error('Koneksi database cloud belum siap. Pastikan terhubung ke internet.');
-  }
+// Helper: Cek apakah status pesanan Finance adalah sedang diantar
+function isOrderAntar(status) {
+  if (!status) return false;
+  const s = String(status).trim().toLowerCase();
+  return (
+    s === 'papan di antar' ||
+    s === 'papan diantar' ||
+    s === 'antar' ||
+    s === 'diantar' ||
+    s === 'siap diantar' ||
+    s.includes('di antar') ||
+    s.includes('diantar') ||
+    s.includes('antar')
+  );
+}
 
-  // Baca dari node pesanan Finance (jalur: stores/{PIN}/pesanan)
+let isSyncingFinanceOrders = false;
+
+// ─── Listener Realtime Otomatis dari Database Finance (< 1 Detik) ────────────
+// Berjalan di latar belakang: ketika Finance mengubah status pesanan menjadi "Papan Di Antar",
+// data otomatis masuk ke IN OUT Florist secara instan tanpa perlu klik tombol impor!
+function attachFinanceAutoSyncListener() {
+  if (!firebaseDb) return;
+
   const financePesananRef = firebaseDb.ref(`stores/${currentStorePin}/pesanan`);
-  const snap = await financePesananRef.once('value');
-  const financeData = snap.val();
 
+  financePesananRef.on('value', async (snapshot) => {
+    const financeData = snapshot.val();
+    if (!financeData || isSyncingFinanceOrders) return;
+
+    try {
+      isSyncingFinanceOrders = true;
+      const res = await processFinanceOrders(financeData, true /* isAuto */);
+
+      if (res && res.importedCount > 0) {
+        console.log(`[Finance Auto-Sync] ✅ ${res.importedCount} papan baru otomatis diterima dari Finance.`);
+        if (typeof showToast === 'function') {
+          showToast(`📥 ${res.importedCount} Papan baru otomatis masuk dari Finance!`, 'success');
+        }
+        if (typeof NotificationManager !== 'undefined' && NotificationManager.playChime) {
+          NotificationManager.playChime(false);
+        }
+        if (typeof loadAndRenderDashboard === 'function') {
+          await loadAndRenderDashboard();
+        }
+      } else if (res && res.updatedCount > 0) {
+        if (typeof loadAndRenderDashboard === 'function') {
+          await loadAndRenderDashboard();
+        }
+      }
+    } catch (e) {
+      console.warn('[Finance Auto-Sync Error]', e);
+    } finally {
+      setTimeout(() => { isSyncingFinanceOrders = false; }, 400);
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Proses Penyelarasan Pesanan Finance (Dipakai Bersama: Auto-Sync & Manual Impor)
+// 100% Aman & Read-Only: Hanya membaca data pesanan Finance tanpa mengubah datanya
+//
+// PERLINDUNGAN 3 LAPIS agar papan SELESAI tidak pernah muncul ulang di tab Telat:
+//   Lapis 1: localStorage blacklist (tanpa akses DB sama sekali, tercepat)
+//   Lapis 2: Pencocokan berlapis (finance_id → ID papan → nota fuzzy → nota mentah)
+//   Lapis 3: Cek status_jemput === 'SELESAI' + tambah ke blacklist jika ditemukan
+// ─────────────────────────────────────────────────────────────────────────────
+async function processFinanceOrders(financeData, isAuto = false) {
   if (!financeData) {
-    return { count: 0, message: `Tidak ditemukan data pesanan di aplikasi Finance.\n\nPastikan:\n• PIN Cloud sama dengan PIN di Finance (sekarang: ${currentStorePin})\n• Aplikasi Finance sudah pernah disinkronkan ke cloud` };
+    return { count: 0, importedCount: 0, updatedCount: 0, message: 'Tidak ditemukan data pesanan di Finance.' };
   }
 
   const orders = Object.values(financeData).filter(o => o && o.id);
 
-  // Filter hanya pesanan yang berstatus 'Papan Di Antar' (belum dijemput kembali)
-  const antarOrders = orders.filter(o => o.status_proses === 'Papan Di Antar');
+  // Filter pesanan yang berstatus Antar / Papan Di Antar
+  const antarOrders = orders.filter(o => isOrderAntar(o.status_proses));
 
   if (antarOrders.length === 0) {
     return {
       count: 0,
-      message: `Tidak ada pesanan berstatus "Papan Di Antar" di Finance saat ini.\n\nTotal pesanan di Finance: ${orders.length} pesanan.\nImpor hanya dilakukan untuk papan yang sudah diantar dan belum dijemput.`
+      importedCount: 0,
+      updatedCount: 0,
+      message: `Tidak ada pesanan berstatus "Papan Di Antar" di Finance saat ini.\nTotal pesanan di Finance: ${orders.length} pesanan.`
     };
   }
+
+  // ── LAPIS 1: Muat Blacklist SELESAI dari localStorage ────────────────────────
+  // Menyimpan ID pesanan Finance yang sudah pernah di-Check IN agar tidak diulang
+  const FINISHED_KEY = 'inout_finished_finance_ids';
+  let finishedIds = {};
+  try { finishedIds = JSON.parse(localStorage.getItem(FINISHED_KEY) || '{}'); } catch (_) {}
 
   let importedCount = 0;
   let updatedCount = 0;
 
   for (const ord of antarOrders) {
+    const ordIdStr = String(ord.id || '').trim();
+
+    // ── CEK LAPIS 1: Blacklist localStorage (instant, tanpa akses DB) ──────────
+    if (finishedIds[ordIdStr]) {
+      // Sudah pernah Check IN sebelumnya → lewati sepenuhnya
+      console.log(`[Finance Sync] ⏭️ Skip pesanan ${ordIdStr} (ada di blacklist SELESAI)`);
+      continue;
+    }
+
     // Tentukan jenis acara dari ucapan/tipe papan secara otomatis
     let detectedAcara = 'Pesta / Pernikahan';
     let durationDays = 1;
@@ -241,37 +317,61 @@ async function importFromAkioFinancePesanan() {
                lowerUcapan.includes('launching')) {
       detectedAcara = 'Grand Opening / Peresmian Toko';
       durationDays = 2;
+    } else if (lowerUcapan.includes('sukses') || lowerUcapan.includes('selamat') ||
+               lowerUcapan.includes('pelantikan') || lowerUcapan.includes('sertijab') ||
+               lowerUcapan.includes('wisuda') || lowerUcapan.includes('khatam') ||
+               lowerUcapan.includes('tasyakuran') || lowerUcapan.includes('syukuran')) {
+      detectedAcara = 'Selamat & Sukses / Acara';
+      durationDays = 1;
+    } else if (lowerUcapan.includes('wedding') || lowerUcapan.includes('nikah') ||
+               lowerUcapan.includes('pernikahan') || lowerUcapan.includes('barakallah') ||
+               lowerUcapan.includes('pengantin')) {
+      detectedAcara = 'Pesta / Pernikahan';
+      durationDays = 1;
     }
 
-    // Gunakan field name yang tepat sesuai skema Finance DB:
-    // tanggal_antar, no_wa (bukan no_wa_pemesan), lokasi_pengantaran
     const tglAntar = ord.tanggal_antar || ord.tanggal || getTodayDateStr();
     const tglAntarDate = new Date(tglAntar);
     const targetDate = new Date(tglAntarDate);
     targetDate.setDate(targetDate.getDate() + durationDays);
     const targetDateStr = targetDate.toISOString().split('T')[0];
 
-    // ID unik berdasarkan no_nota / ID Finance agar konsisten
-    const noNotaClean = ord.no_nota ? ord.no_nota.replace(/[^a-zA-Z0-9]/g, '') : String(ord.id);
-    const boardId = 'FIN-' + noNotaClean;
-    const boardIdLama = 'B-' + noNotaClean;
-    const ordIdStr = String(ord.id || '').trim();
-    const cleanNota = (ord.no_nota || '').trim().toLowerCase();
+    // Hitung semua varian ID & nota untuk pencocokan berlapis
+    const noNotaRaw = (ord.no_nota || '').trim();
+    // Fuzzy: strip semua karakter non-alfanumerik, lowercase
+    const noNotaFuzzy = noNotaRaw
+      ? noNotaRaw.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
+      : ordIdStr.toLowerCase();
+    const boardId     = 'FIN-' + (noNotaRaw ? noNotaRaw.replace(/[^a-zA-Z0-9]/g, '') : ordIdStr);
+    const boardIdLama = 'B-'   + (noNotaRaw ? noNotaRaw.replace(/[^a-zA-Z0-9]/g, '') : ordIdStr);
+    const cleanNota   = noNotaRaw.toLowerCase();
 
-    // ─── Cek SEMUA data yang cocok di database (ID baru, ID lama, no_nota) ───
+    // ── CEK LAPIS 2: Cari papan yang cocok di IndexedDB ──────────────────────
     const allMatches = await db.boards.filter(b => {
+      // Prioritas 1: finance_id — paling andal setelah import pertama (BARU)
+      if (b.finance_id && b.finance_id === ordIdStr) return true;
+      // Prioritas 2: ID papan format FIN- dan B-
       if (b.id === boardId || b.id === boardIdLama) return true;
       if (b.id === 'B-' + ordIdStr || b.id === 'FIN-' + ordIdStr) return true;
+      // Prioritas 3: nota fuzzy (strip karakter khusus dari kedua sisi)
+      const bNotaFuzzy = (b.no_nota || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      if (noNotaFuzzy && bNotaFuzzy && bNotaFuzzy === noNotaFuzzy) return true;
+      // Prioritas 4: nota mentah case-insensitive
       if (cleanNota && (b.no_nota || '').trim().toLowerCase() === cleanNota) return true;
+      // Prioritas 5: ID Finance tersimpan sebagai no_nota (data lama)
       if (ordIdStr && (b.no_nota || '').trim() === ordIdStr) return true;
       return false;
     }).toArray();
 
-    // Jika SALAH SATU papan yang cocok sudah di-Check IN (SELESAI) → SKIP!
-    // Papan ini sudah diambil oleh tim florist.
+    // ── CEK LAPIS 3: Status SELESAI + tambah ke blacklist ──────────────────────
     const isCompleted = allMatches.some(b => b.status_jemput === 'SELESAI');
     if (isCompleted) {
-      // Bersihkan data duplikat 'BELUM' jika sempat terbuat akibat bug impor sebelumnya
+      // Catat ke blacklist localStorage → sinkronisasi berikutnya langsung skip tanpa akses DB
+      finishedIds[ordIdStr] = new Date().toISOString();
+      try { localStorage.setItem(FINISHED_KEY, JSON.stringify(finishedIds)); } catch (_) {}
+      console.log(`[Finance Sync] ✅ Papan dari pesanan ${ordIdStr} sudah Check IN → ditambah ke blacklist.`);
+
+      // Hapus duplikat yang belum SELESAI jika ada
       for (const b of allMatches) {
         if (b.status_jemput !== 'SELESAI') {
           await deleteBoardFromCloud(b.id);
@@ -280,7 +380,7 @@ async function importFromAkioFinancePesanan() {
       continue;
     }
 
-    // Jika belum SELESAI, ambil data existing pertama dan hapus duplikat ekstra jika ada
+    // Jika belum SELESAI, ambil data existing pertama dan hapus duplikat ekstra
     let existing = allMatches.length > 0 ? allMatches[0] : null;
     if (allMatches.length > 1) {
       for (let i = 1; i < allMatches.length; i++) {
@@ -288,27 +388,25 @@ async function importFromAkioFinancePesanan() {
       }
     }
 
-    // Gunakan ID yang sudah ada jika ketemu (supaya tidak buat entri baru)
     const finalBoardId = existing ? existing.id : boardId;
 
     const boardObj = {
       id: finalBoardId,
-      no_nota: ord.no_nota || String(ord.id),
+      finance_id: ordIdStr,                              // ← Simpan ID Finance (kunci pencocokan andal)
+      no_nota: noNotaRaw || ordIdStr,
       nama_pemesan: ord.nama_pemesan || 'Tanpa Nama',
-      no_wa_pemesan: ord.no_wa || '',                    // field 'no_wa' di Finance
+      no_wa_pemesan: ord.no_wa || '',
       jenis_papan: ord.jenis_papan || 'Papan Bunga',
       jenis_acara: detectedAcara,
       durasi_hari: durationDays,
       ucapan: ord.ucapan || '',
-      lokasi: ord.lokasi_pengantaran || '',               // field 'lokasi_pengantaran' di Finance
+      lokasi: ord.lokasi_pengantaran || '',
       gps_lat: ord.gps_lat ? parseFloat(ord.gps_lat) : null,
       gps_lng: ord.gps_lng ? parseFloat(ord.gps_lng) : null,
       tgl_antar: tglAntar,
       jam_antar: ord.jam_antar || '09:00',
-      // Pertahankan target jemput yang sudah diatur manual oleh user, jika sudah ada
       target_tgl_jemput: existing ? (existing.target_tgl_jemput || targetDateStr) : targetDateStr,
       target_jam_jemput: existing ? (existing.target_jam_jemput || '18:00') : '18:00',
-      // Pertahankan status & data check-in yang sudah ada
       status_jemput: existing ? existing.status_jemput : 'BELUM',
       foto_antar: existing ? existing.foto_antar : null,
       foto_jemput: null,
@@ -316,7 +414,7 @@ async function importFromAkioFinancePesanan() {
       petugas_jemput: existing ? existing.petugas_jemput : '',
       tgl_jemput: existing ? existing.tgl_jemput : null,
       jam_jemput: existing ? existing.jam_jemput : null,
-      catatan: existing ? existing.catatan : 'Diimpor otomatis dari Pesanan Finance'
+      catatan: existing ? existing.catatan : 'Tersinkron otomatis dari Pesanan Finance'
     };
 
     await saveBoardToCloud(boardObj);
@@ -326,21 +424,33 @@ async function importFromAkioFinancePesanan() {
     } else {
       importedCount++;
     }
-
   }
 
   let msg = '';
   if (importedCount > 0 && updatedCount > 0) {
-    msg = `✅ Impor selesai!\n• ${importedCount} data baru ditambahkan\n• ${updatedCount} data yang sudah ada diperbarui\n\nTotal di Finance (Papan Di Antar): ${antarOrders.length}`;
+    msg = `✅ Sinkronisasi selesai!\n• ${importedCount} data baru ditambahkan\n• ${updatedCount} data yang sudah ada diperbarui\n\nTotal di Finance (Papan Di Antar): ${antarOrders.length}`;
   } else if (importedCount > 0) {
-    msg = `✅ Berhasil mengimpor ${importedCount} data papan baru dari Finance!`;
+    msg = `✅ Berhasil menerima ${importedCount} data papan baru dari Finance!`;
   } else if (updatedCount > 0) {
     msg = `🔄 ${updatedCount} data papan sudah ada dan berhasil diperbarui dari Finance.`;
   } else {
-    msg = `ℹ️ Semua ${antarOrders.length} papan dari Finance sudah ada di daftar dan sudah di-Check IN. Tidak ada yang perlu diperbarui.`;
+    msg = `ℹ️ Semua ${antarOrders.length} papan dari Finance sudah ada di daftar dan sudah di-Check IN.`;
   }
 
-  return { count: importedCount + updatedCount, message: msg };
+  return { count: importedCount + updatedCount, importedCount, updatedCount, message: msg };
+}
+
+// Fitur Baca / Impor Manual dari Pesanan Finance Akio (Read-Only)
+async function importFromAkioFinancePesanan() {
+  if (!firebaseDb) {
+    throw new Error('Koneksi database cloud belum siap. Pastikan terhubung ke internet.');
+  }
+
+  const financePesananRef = firebaseDb.ref(`stores/${currentStorePin}/pesanan`);
+  const snap = await financePesananRef.once('value');
+  const financeData = snap.val();
+
+  return await processFinanceOrders(financeData, false /* isAuto = false */);
 }
 
 // Update tampilan badge status sinkronisasi di UI
@@ -360,6 +470,58 @@ function updateSyncUI() {
   }
 }
 
+// ─── Dipanggil setiap kali papan di-Check IN (SELESAI) ───────────────────────
+// Langsung tambahkan finance_id papan ini ke blacklist agar tidak pernah di-import ulang
+function markFinanceOrderAsFinished(board) {
+  if (!board) return;
+  const finId = board.finance_id || '';
+  if (!finId) return; // Papan tidak berasal dari Finance, tidak perlu blacklist
+  try {
+    const FINISHED_KEY = 'inout_finished_finance_ids';
+    const finishedIds = JSON.parse(localStorage.getItem(FINISHED_KEY) || '{}');
+    finishedIds[finId] = new Date().toISOString();
+    localStorage.setItem(FINISHED_KEY, JSON.stringify(finishedIds));
+    console.log(`[Finance Sync] 🔒 Pesanan Finance ${finId} ditandai SELESAI di blacklist.`);
+  } catch (_) {}
+}
+
+// ─── Dipanggil saat UndoCheckIn ──────────────────────────────────────────────
+// Hapus dari blacklist agar papan bisa di-import ulang dari Finance jika diperlukan
+function unmarkFinanceOrderAsFinished(board) {
+  if (!board) return;
+  const finId = board.finance_id || '';
+  if (!finId) return;
+  try {
+    const FINISHED_KEY = 'inout_finished_finance_ids';
+    const finishedIds = JSON.parse(localStorage.getItem(FINISHED_KEY) || '{}');
+    delete finishedIds[finId];
+    localStorage.setItem(FINISHED_KEY, JSON.stringify(finishedIds));
+    console.log(`[Finance Sync] 🔓 Pesanan Finance ${finId} dihapus dari blacklist (Undo Check IN).`);
+  } catch (_) {}
+}
+
+// ─── Registrasi Awal (Startup) ────────────────────────────────────────────────
+// Saat aplikasi pertama kali dibuka, daftarkan semua papan SELESAI yang sudah ada
+// ke blacklist agar sinkronisasi berikutnya langsung skip tanpa perlu akses DB
+async function seedFinishedBlacklist() {
+  try {
+    const FINISHED_KEY = 'inout_finished_finance_ids';
+    const finishedIds = JSON.parse(localStorage.getItem(FINISHED_KEY) || '{}');
+    const completedBoards = await db.boards.filter(b => b.status_jemput === 'SELESAI' && b.finance_id).toArray();
+    let added = 0;
+    for (const b of completedBoards) {
+      if (!finishedIds[b.finance_id]) {
+        finishedIds[b.finance_id] = b.tgl_jemput || new Date().toISOString();
+        added++;
+      }
+    }
+    if (added > 0) {
+      localStorage.setItem(FINISHED_KEY, JSON.stringify(finishedIds));
+      console.log(`[Finance Sync] 🌱 ${added} papan SELESAI didaftarkan ke blacklist saat startup.`);
+    }
+  } catch (_) {}
+}
+
 window.addEventListener('online', () => {
   syncState.isOnline = true;
   updateSyncUI();
@@ -370,3 +532,4 @@ window.addEventListener('offline', () => {
   syncState.isConnected = false;
   updateSyncUI();
 });
+
