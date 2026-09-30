@@ -17,11 +17,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   initTimePickers24();
   startLiveClock();
   setupEventListeners();
-  initFirebaseSync();
   await ensureBoardTypesSeeded();   // Pastikan tipe papan sudah ada di DB
   await refreshBoardTypesDatalist(); // Isi datalist dari DB
   await loadAndRenderDashboard();
+  // PENTING: Blacklist harus diisi SEBELUM Firebase connect agar tidak ada race condition
   await seedFinishedBlacklist();    // Daftarkan papan SELESAI existing ke blacklist Finance
+  initFirebaseSync();               // Baru hubungkan Firebase (listener akan baca blacklist yang sudah siap)
 
   // Set default form date ke hari ini
   const tglAntarInput = document.getElementById('form-tgl-antar');
