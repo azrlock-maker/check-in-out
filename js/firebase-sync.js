@@ -88,11 +88,25 @@ function attachCloudListeners() {
       }
 
       // 2. Jika ada data yang dihapus di cloud, hapus juga di lokal
+      // KECUALI papan yang sudah SELESAI — jangan hapus, karena mungkin
+      // ada race condition di mana Finance sync sempat menimpa data cloud.
       const allLocalBoards = await db.boards.toArray();
       for (const lb of allLocalBoards) {
         if (lb.id && !cloudIdSet.has(String(lb.id))) {
-          await db.boards.delete(lb.id);
-          hasChanges = true;
+          // Jangan hapus board yang sudah SELESAI — lindungi data check-in
+          if (lb.status_jemput === 'SELESAI') {
+            // Justru upload ke cloud agar sinkron
+            if (firebaseDb && syncState.isConnected) {
+              try {
+                const boardRef = firebaseDb.ref(`stores/${currentStorePin}/check_in_out/boards/${lb.id}`);
+                await boardRef.set(lb);
+                console.log(`[Board Sync] Upload papan SELESAI yang hilang dari cloud: ${lb.id}`);
+              } catch (_) {}
+            }
+          } else {
+            await db.boards.delete(lb.id);
+            hasChanges = true;
+          }
         }
       }
 
@@ -296,11 +310,54 @@ async function processFinanceOrders(financeData, isAuto = false) {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // KUNCI PERBAIKAN: Muat SEMUA papan SELESAI dari DB SATU KALI di sini.
-  // Tidak perlu loop per-pesanan — cukup satu DB read untuk semua.
+  // KUNCI PERBAIKAN SINKRONISASI HP ↔ LAPTOP:
+  //
+  // Masalah: Saat laptop pertama buka, Finance listener & board listener bisa
+  // tembak bersamaan. Board listener belum selesai sync → DB lokal kosong →
+  // Finance sync anggap tidak ada papan SELESAI → buat board BELUM → overwrite
+  // board SELESAI yang sudah disimpan HP di cloud.
+  //
+  // Solusi: Baca SELESAI boards dari DUA SUMBER sebelum mulai loop:
+  //   1. DB lokal (cepat, untuk papan yang sudah ada di perangkat ini)
+  //   2. Firebase cloud (otoritatif, untuk papan yang diubah perangkat lain)
+  // Gabungkan keduanya → tidak ada papan SELESAI yang terlewat.
   // ═══════════════════════════════════════════════════════════════════════════
-  const allSelesaiBoards = await db.boards.filter(b => b.status_jemput === 'SELESAI').toArray();
-  console.log(`[Finance Sync] 📋 ${allSelesaiBoards.length} papan SELESAI dimuat dari DB untuk proteksi.`);
+
+  // Sumber 1: DB lokal
+  const localSelesaiBoards = await db.boards.filter(b => b.status_jemput === 'SELESAI').toArray();
+
+  // Sumber 2: Firebase cloud (baca langsung, bypass race condition)
+  let cloudSelesaiBoards = [];
+  if (firebaseDb && syncState.isConnected) {
+    try {
+      const cloudSnap = await firebaseDb
+        .ref(`stores/${currentStorePin}/check_in_out/boards`)
+        .once('value');
+      const cloudBoardsObj = cloudSnap.val() || {};
+      cloudSelesaiBoards = Object.values(cloudBoardsObj).filter(b => b && b.status_jemput === 'SELESAI');
+
+      // Segera sync papan SELESAI dari cloud ke DB lokal agar selaras
+      for (const cb of cloudSelesaiBoards) {
+        if (cb.id) {
+          const local = await db.boards.get(cb.id);
+          if (!local || local.status_jemput !== 'SELESAI') {
+            await db.boards.put(cb);
+            console.log(`[Finance Sync] 🔄 Sinkron papan SELESAI dari cloud: ${cb.id}`);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Finance Sync] Gagal baca cloud boards:', e);
+    }
+  }
+
+  // Gabungkan: lokal + cloud (tanpa duplikat berdasarkan id)
+  const seenIds = new Set(localSelesaiBoards.map(b => b.id));
+  const allSelesaiBoards = [
+    ...localSelesaiBoards,
+    ...cloudSelesaiBoards.filter(b => b.id && !seenIds.has(b.id))
+  ];
+  console.log(`[Finance Sync] Proteksi SELESAI: ${localSelesaiBoards.length} lokal + ${cloudSelesaiBoards.length} cloud = ${allSelesaiBoards.length} total.`);
 
   // Blacklist localStorage sebagai lapis tambahan (memperlancar siklus berikutnya)
   const FINISHED_KEY = 'inout_finished_finance_ids';
