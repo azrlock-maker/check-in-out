@@ -426,11 +426,24 @@ async function processFinanceOrders(financeData, isAuto = false) {
       durationDays  = 1;
     }
 
-    const tglAntar     = ord.tanggal_antar || ord.tanggal || getTodayDateStr();
-    const tglAntarDate = new Date(tglAntar);
-    const targetDate   = new Date(tglAntarDate);
-    targetDate.setDate(targetDate.getDate() + durationDays);
-    const targetDateStr = targetDate.toISOString().split('T')[0];
+    const tglAntar = ord.tanggal_antar || ord.tanggal || getTodayDateStr();
+    let targetDateStr = getTodayDateStr();
+    try {
+      let d = new Date(tglAntar);
+      if (isNaN(d.getTime())) {
+        const parts = String(tglAntar).split(/[-/]/);
+        if (parts.length === 3) {
+          if (parts[0].length === 4) d = new Date(parts[0], parts[1] - 1, parts[2]);
+          else d = new Date(parts[2], parts[1] - 1, parts[0]);
+        }
+      }
+      if (!isNaN(d.getTime())) {
+        d.setDate(d.getDate() + durationDays);
+        targetDateStr = d.toISOString().split('T')[0];
+      }
+    } catch (_) {
+      targetDateStr = getTodayDateStr();
+    }
 
     // ── Cari papan existing (BELUM / non-SELESAI) untuk di-update ─────────────
     const allMatches = await db.boards.filter(b =>
@@ -530,43 +543,48 @@ function updateSyncUI() {
 // ─── Dipanggil setiap kali papan di-Check IN (SELESAI) ───────────────────────
 // Langsung update blacklist localStorage agar sinkronisasi berikutnya lebih cepat
 function markFinanceOrderAsFinished(board) {
-  if (!board || !board.finance_id) return;
+  if (!board) return;
+  const finId = board.finance_id || (board.id && board.id.startsWith('FIN-') ? board.id.replace(/^FIN-/, '') : null);
+  if (!finId) return;
   try {
     const FINISHED_KEY = 'inout_finished_finance_ids';
     const finishedIds = JSON.parse(localStorage.getItem(FINISHED_KEY) || '{}');
-    finishedIds[board.finance_id] = new Date().toISOString();
+    finishedIds[finId] = new Date().toISOString();
     localStorage.setItem(FINISHED_KEY, JSON.stringify(finishedIds));
-    console.log(`[Finance Sync] Pesanan Finance ${board.finance_id} ditandai SELESAI di blacklist.`);
+    console.log(`[Finance Sync] Pesanan Finance ${finId} ditandai SELESAI di blacklist.`);
   } catch (_) {}
 }
 
 // ─── Dipanggil saat Undo Check IN ────────────────────────────────────────────
 // Hapus dari blacklist agar bisa diproses ulang dari Finance
 function unmarkFinanceOrderAsFinished(board) {
-  if (!board || !board.finance_id) return;
+  if (!board) return;
+  const finId = board.finance_id || (board.id && board.id.startsWith('FIN-') ? board.id.replace(/^FIN-/, '') : null);
+  if (!finId) return;
   try {
     const FINISHED_KEY = 'inout_finished_finance_ids';
     const finishedIds = JSON.parse(localStorage.getItem(FINISHED_KEY) || '{}');
-    delete finishedIds[board.finance_id];
+    delete finishedIds[finId];
     localStorage.setItem(FINISHED_KEY, JSON.stringify(finishedIds));
-    console.log(`[Finance Sync] Pesanan Finance ${board.finance_id} dihapus dari blacklist (Undo).`);
+    console.log(`[Finance Sync] Pesanan Finance ${finId} dihapus dari blacklist (Undo).`);
   } catch (_) {}
 }
 
 // ─── Dipanggil SEBELUM initFirebaseSync() saat aplikasi pertama kali dibuka ──
 // Isi blacklist dari papan SELESAI yang sudah ada agar Finance listener
-// tidak perlu scan DB setiap kali (hanya untuk papan yang punya finance_id)
+// tidak perlu scan DB setiap kali (untuk papan yang punya finance_id atau id FIN-)
 async function seedFinishedBlacklist() {
   try {
     const FINISHED_KEY = 'inout_finished_finance_ids';
     const finishedIds = JSON.parse(localStorage.getItem(FINISHED_KEY) || '{}');
     const completedBoards = await db.boards
-      .filter(b => b.status_jemput === 'SELESAI' && b.finance_id)
+      .filter(b => b.status_jemput === 'SELESAI')
       .toArray();
     let added = 0;
     for (const b of completedBoards) {
-      if (!finishedIds[b.finance_id]) {
-        finishedIds[b.finance_id] = b.tgl_jemput || new Date().toISOString();
+      const finId = b.finance_id || (b.id && b.id.startsWith('FIN-') ? b.id.replace(/^FIN-/, '') : null);
+      if (finId && !finishedIds[finId]) {
+        finishedIds[finId] = b.tgl_jemput || new Date().toISOString();
         added++;
       }
     }

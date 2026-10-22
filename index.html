@@ -195,14 +195,18 @@
           <!-- Row: No. Nota & Pemesan -->
           <div class="form-row">
             <div class="form-group">
-              <label class="form-label">No. Nota / ID Papan <span class="req">*</span></label>
-              <input type="text" class="form-input" id="form-no-nota" placeholder="Contoh: NOTA-101 / R-04" required />
+              <label class="form-label">No. Nota / ID Papan <span style="font-size:0.75rem; font-weight:normal; color:var(--text-muted);">(Otomatis)</span></label>
+              <div style="display:flex; gap:6px; align-items:center;">
+                <input type="text" class="form-input" id="form-no-nota" placeholder="(Otomatis dibuat jika kosong)" style="flex:1;" />
+                <button type="button" class="btn btn-secondary" onclick="generateNoNota(true)" title="Acak / Buat nomor nota baru" style="padding:8px 10px; font-size:0.8rem; white-space:nowrap; flex-shrink:0;">🎲 Acak</button>
+              </div>
             </div>
             <div class="form-group">
               <label class="form-label">Nama Pemesan <span class="req">*</span></label>
               <input type="text" class="form-input" id="form-nama-pemesan" placeholder="Nama pemesan" required />
             </div>
           </div>
+
 
           <!-- Row: No. WA & Jenis Papan -->
           <div class="form-row">
@@ -246,52 +250,24 @@
             <input type="hidden" id="form-jenis-acara" value="Pesta / Pernikahan / Wisuda" />
           </div>
 
-          <!-- Tanggal & Jam Pengantaran (OUT) -->
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Tanggal Antar (OUT) <span class="req">*</span></label>
-              <input type="date" class="form-input" id="form-tgl-antar" required />
-            </div>
-            <div class="form-group">
-              <label class="form-label">Jam Antar (Format 24 Jam)</label>
-              <div class="time-24h-group">
-                <select class="time-24h-select" id="form-jam-antar-hh"></select>
-                <span class="time-sep">:</span>
-                <select class="time-24h-select" id="form-jam-antar-mm"></select>
-                <span class="time-tag">WIB (24 Jam)</span>
-              </div>
-              <div class="time-quick-chips">
-                <button type="button" class="chip-time" onclick="setTime24('form-jam-antar', '08', '00')">08:00</button>
-                <button type="button" class="chip-time" onclick="setTime24('form-jam-antar', '09', '00')">09:00</button>
-                <button type="button" class="chip-time" onclick="setTime24('form-jam-antar', '13', '00')">13:00</button>
-                <button type="button" class="chip-time" onclick="setTime24('form-jam-antar', '15', '00')">15:00</button>
-              </div>
-              <input type="hidden" id="form-jam-antar" value="09:00" />
-            </div>
+          <!-- Tanggal Pengantaran (OUT) -->
+          <div class="form-group">
+            <label class="form-label">Tanggal Antar (OUT) <span class="req">*</span></label>
+            <input type="date" class="form-input" id="form-tgl-antar" required />
+            <!-- Jam antar default otomatis 09:00, tidak perlu diisi manual -->
+            <input type="hidden" id="form-jam-antar" value="09:00" />
+            <input type="hidden" id="form-jam-antar-hh" value="09" />
+            <input type="hidden" id="form-jam-antar-mm" value="00" />
           </div>
 
           <!-- Target Batas Penjemputan (Batas Waktu Sewa Selesai) -->
-          <div class="form-row" style="background:rgba(244,63,94,0.06); padding:10px; border-radius:var(--radius-md); border:1px dashed rgba(244,63,94,0.3);">
-            <div class="form-group">
-              <label class="form-label" style="color:#fda4af;">⏳ Target Tanggal Jemput <span class="req">*</span></label>
-              <input type="date" class="form-input" id="form-target-tgl" required />
-            </div>
-            <div class="form-group">
-              <label class="form-label" style="color:#fda4af;">Jam Batas Jemput (24 Jam)</label>
-              <div class="time-24h-group">
-                <select class="time-24h-select" id="form-target-jam-hh"></select>
-                <span class="time-sep">:</span>
-                <select class="time-24h-select" id="form-target-jam-mm"></select>
-                <span class="time-tag">WIB (24 Jam)</span>
-              </div>
-              <div class="time-quick-chips">
-                <button type="button" class="chip-time" onclick="setTime24('form-target-jam', '17', '00')">17:00</button>
-                <button type="button" class="chip-time" onclick="setTime24('form-target-jam', '18', '00')">18:00</button>
-                <button type="button" class="chip-time" onclick="setTime24('form-target-jam', '21', '00')">21:00</button>
-                <button type="button" class="chip-time" onclick="setTime24('form-target-jam', '22', '00')">22:00</button>
-              </div>
-              <input type="hidden" id="form-target-jam" value="18:00" />
-            </div>
+          <div class="form-group" style="background:rgba(244,63,94,0.06); padding:10px; border-radius:var(--radius-md); border:1px dashed rgba(244,63,94,0.3);">
+            <label class="form-label" style="color:#fda4af;">⏳ Target Tanggal Jemput <span class="req">*</span></label>
+            <input type="date" class="form-input" id="form-target-tgl" required />
+            <!-- Jam batas jemput default otomatis 18:00, tidak perlu diisi manual -->
+            <input type="hidden" id="form-target-jam" value="18:00" />
+            <input type="hidden" id="form-target-jam-hh" value="18" />
+            <input type="hidden" id="form-target-jam-mm" value="00" />
           </div>
 
 

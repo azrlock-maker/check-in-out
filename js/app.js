@@ -120,6 +120,44 @@ function setTime24(fieldPrefix, hh, mm) {
   if (hiddenInput) hiddenInput.value = `${formattedH}:${formattedM}`;
 }
 
+// ─── Generate No. Nota Otomatis ───────────────────────────────────────────────
+// Format: P-DDMMYY-XXX  (P = Papan, DDMMYY = tanggal hari ini, XXX = 3 digit acak/unik)
+// Contoh: P-221026-738
+function generateNoNota(shouldFocus = false) {
+  const now = new Date();
+  const dd  = String(now.getDate()).padStart(2, '0');
+  const mm  = String(now.getMonth() + 1).padStart(2, '0');
+  const yy  = String(now.getFullYear()).slice(-2);
+  
+  let nota = '';
+  const existingSet = new Set((appState.cachedBoards || []).map(b => (b.no_nota || '').toUpperCase()));
+
+  // Cari nomor acak 3-digit yang belum pernah dipakai hari ini
+  for (let i = 0; i < 30; i++) {
+    const rnd = String(Math.floor(Math.random() * 900) + 100); // 100–999
+    const candidate = `P-${dd}${mm}${yy}-${rnd}`;
+    if (!existingSet.has(candidate.toUpperCase())) {
+      nota = candidate;
+      break;
+    }
+  }
+  // Fallback pengaman menggunakan timestamp milidetik jika padat
+  if (!nota) {
+    const rnd = String(Date.now()).slice(-4);
+    nota = `P-${dd}${mm}${yy}-${rnd}`;
+  }
+
+  const input = document.getElementById('form-no-nota');
+  if (input) {
+    input.value = nota;
+    if (shouldFocus) {
+      input.focus();
+      input.select();
+    }
+  }
+  return nota;
+}
+
 // Setup Seluruh Event Listener
 
 function setupEventListeners() {
@@ -696,7 +734,15 @@ function openBoardModal(board = null) {
     const curH = String(now.getHours()).padStart(2, '0');
     setTime24('form-jam-antar', curH, '00');
     setTime24('form-target-jam', '18', '00');
+    // Auto-isi no nota baru secara otomatis saat tambah papan manual (tanpa curi fokus)
+    generateNoNota(false);
     applyEventPreset('pesta', 1);
+
+    // Langsung arahkan kursor ke Nama Pemesan agar praktis & cepat
+    setTimeout(() => {
+      const namaInput = document.getElementById('form-nama-pemesan');
+      if (namaInput) namaInput.focus();
+    }, 150);
   }
 
   modal.classList.add('active');
@@ -706,12 +752,23 @@ function closeBoardModal() {
   document.getElementById('modal-board').classList.remove('active');
 }
 
+// Buka modal untuk edit data papan
+async function openEditBoard(boardId) {
+  const board = await db.boards.get(boardId);
+  if (board) openBoardModal(board);
+}
+
 // Simpan Papan dari Form
 async function handleSaveBoard(e) {
   e.preventDefault();
 
-  const id = document.getElementById('form-board-id').value || ('B-' + Date.now());
-  const noNota = document.getElementById('form-no-nota').value.trim();
+  // Jika no nota kosong → generate otomatis
+  let noNota = document.getElementById('form-no-nota').value.trim();
+  if (!noNota) noNota = generateNoNota(false);
+
+  // Buat ID papan konsisten & selaras dengan No. Nota
+  const cleanNotaKey = noNota.replace(/[^a-zA-Z0-9]/g, '');
+  const id = document.getElementById('form-board-id').value || ('B-' + (cleanNotaKey || Date.now()));
   const namaPemesan = document.getElementById('form-nama-pemesan').value.trim();
   const noWa = document.getElementById('form-no-wa').value.trim();
   const jenisPapan = document.getElementById('form-jenis-papan').value;

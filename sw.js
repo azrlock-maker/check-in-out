@@ -1,5 +1,5 @@
 // Check IN/OUT Florist - Service Worker
-const CACHE_NAME = 'check-inout-florist-v1';
+const CACHE_NAME = 'check-inout-florist-v2';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
